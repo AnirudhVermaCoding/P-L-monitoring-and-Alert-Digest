@@ -124,16 +124,26 @@ def load_pnl(path: str | Path) -> pd.DataFrame:
     for col in REQUIRED_NUMERIC:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # Drop entirely-non-numeric junk rows (stray header/blank lines).
     df = df.dropna(subset=REQUIRED_NUMERIC, how="all")
     if df.empty:
         raise LoaderError(
             "No numeric rows found. Check that Revenue and cost columns contain numbers."
         )
 
-    # Drop rows with no revenue and warn on non-positive revenue (division base).
-    bad_rev = df["Revenue"].isna() | (df["Revenue"] <= 0)
+    # A row missing ANY revenue/cost value would compute a silently-wrong (too-healthy)
+    # margin, because pandas' sum() skips NaN. Drop such incomplete rows rather than mislead.
+    incomplete = df[REQUIRED_NUMERIC].isna().any(axis=1)
+    if incomplete.all():
+        raise LoaderError(
+            "Every row is missing at least one Revenue or cost value — cannot compute margins."
+        )
+    df = df[~incomplete].copy()
+
+    # Drop rows with non-positive revenue (division base).
+    bad_rev = df["Revenue"] <= 0
     if bad_rev.all():
-        raise LoaderError("Every row has zero or missing Revenue — cannot compute margins.")
+        raise LoaderError("Every row has zero or negative Revenue — cannot compute margins.")
     df = df[~bad_rev].copy()
 
     # Fill defaults for optional dimensions.
@@ -143,9 +153,13 @@ def load_pnl(path: str | Path) -> pd.DataFrame:
 
     if "Date" not in df.columns:
         if "Day" in df.columns:
-            df["Date"] = "Day " + pd.to_numeric(df["Day"], errors="coerce").astype("Int64").astype(str)
+            # Zero-pad so lexical sort (used for "latest day" / trends) matches numeric order.
+            days = pd.to_numeric(df["Day"], errors="coerce").astype("Int64")
+            width = max(2, len(str(int(days.max())))) if days.notna().any() else 2
+            df["Date"] = [f"Day {int(d):0{width}d}" if pd.notna(d) else "Day ?" for d in days]
         else:
-            df["Date"] = ["Day " + str(i + 1) for i in range(len(df))]
+            width = max(2, len(str(len(df))))
+            df["Date"] = [f"Day {i + 1:0{width}d}" for i in range(len(df))]
     else:
         # Keep dates as readable ISO strings where possible.
         parsed = pd.to_datetime(df["Date"], errors="coerce")

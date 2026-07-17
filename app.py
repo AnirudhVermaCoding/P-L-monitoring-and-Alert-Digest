@@ -96,13 +96,19 @@ with st.sidebar:
     st.caption(f"Email mode: **{os.environ.get('EMAIL_MODE', 'outbox')}**")
 
 
-# Resolve which source to run.
+# Resolve which source to run. Buttons fire True only on their click-rerun, so they're
+# one-shot. st.file_uploader, however, returns the file on EVERY rerun — so we must guard
+# it with a signature check, or the post-completion st.rerun() would relaunch the job in a
+# loop.
 source_to_run = None
 if uploaded is not None:
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    dest = SCRATCH / uploaded.name
-    dest.write_bytes(uploaded.getbuffer())
-    source_to_run = str(dest)
+    sig = f"{uploaded.name}:{uploaded.size}"
+    if st.session_state.get("last_upload_sig") != sig:
+        st.session_state["last_upload_sig"] = sig
+        SCRATCH.mkdir(parents=True, exist_ok=True)
+        dest = SCRATCH / uploaded.name
+        dest.write_bytes(uploaded.getbuffer())
+        source_to_run = str(dest)
 elif use_sample:
     source_to_run = str(DATA_DIR / "Case Study 3.xlsx")
 elif use_extended:

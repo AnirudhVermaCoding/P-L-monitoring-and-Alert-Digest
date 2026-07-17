@@ -91,10 +91,11 @@ def _owner_messages(anomalies_df: pd.DataFrame, config: Config) -> list[dict]:
 def _digest_messages(digests: dict[str, str], config: Config) -> list[dict]:
     messages = []
     for fc, digest in digests.items():
-        # Colour is on the second line "Colour: X | ...".
+        # Colour word lives on the "Colour: X | ..." line. Find that line, not a fixed index.
         colour = "Green"
+        colour_line = next((ln for ln in digest.split("\n") if ln.startswith("Colour:")), "")
         for tag in COLOUR_EMOJI:
-            if tag in digest.split("\n")[0]:
+            if tag in colour_line:
                 colour = tag
                 break
         subject = f"[{colour}] Daily P&L digest — {fc}"
