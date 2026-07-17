@@ -158,15 +158,22 @@ Hand-computed checks for CM1/CM2, colour bands, the four scenarios, and contribu
 
 ---
 
-## Optional: enabling Grok and real email
+## Optional: enabling an LLM and real email
 
 Both are optional; the app is fully functional without them.
 
-- **Grok (x.ai):** create a key at https://console.x.ai (free signup credits; more via the
-  data-sharing opt-in). Put it in `.env` as `XAI_API_KEY=...`. Default model is `grok-4.3`
-  (cheapest text model). The sidebar shows whether a key was found.
+- **LLM insights (provider auto-detected from the key):** put one key in `.env` as `XAI_API_KEY`.
+  The app looks at the prefix and picks the endpoint automatically:
+  - **Groq** (key starts with `gsk_`) — free and generous; get one at
+    https://console.groq.com/keys . Default model `llama-3.3-70b-versatile` (override with
+    `GROQ_MODEL`). *Recommended free path.*
+  - **Grok / xAI** (key starts with `xai-`) — get one at https://console.x.ai . Model `grok-4.3`.
+  The sidebar shows the active provider + model. Without a key, insights use the deterministic
+  template. The limited per-run LLM budget is spent on the most severe days first (Red/Blue).
 - **Email (SMTP):** set `EMAIL_MODE=smtp` and fill `SMTP_*` in `.env`. Free path: a Gmail
-  account with an [App Password](https://support.google.com/accounts/answer/185833) on port 587.
+  account with an [App Password](https://support.google.com/accounts/answer/185833) (2-step
+  verification must be on; use the 16-character app password, **not** your normal password) on
+  port 587. Also change the placeholder `example.com` addresses in `config.yaml` to real inboxes.
 
 Secrets live only in `.env`, which is gitignored. No keys are committed.
 

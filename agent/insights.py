@@ -100,11 +100,39 @@ def fallback_insight(facts: dict) -> str:
     return " ".join(lines)
 
 
-def _llm_insight(facts: dict, model: str) -> str:
-    """Ask Grok to phrase the pre-computed facts. Raises on any failure (caller falls back)."""
-    from langchain_xai import ChatXAI  # imported lazily so no key => no dependency at import
+def resolve_llm() -> dict | None:
+    """Figure out which LLM provider/model to use from env, or None if no key is set.
 
-    llm = ChatXAI(model=model, temperature=0, timeout=30, max_retries=1)
+    Auto-detects the provider from the key prefix so the user doesn't have to configure it:
+    a Groq key ("gsk_...") uses Groq's free OpenAI-compatible API; an xAI key ("xai-...")
+    uses Grok. Returns {provider, label, key, model, base_url} or None.
+    """
+    key = (os.environ.get("XAI_API_KEY", "").strip()
+           or os.environ.get("GROQ_API_KEY", "").strip()
+           or os.environ.get("LLM_API_KEY", "").strip())
+    if not key:
+        return None
+    if key.startswith("gsk_"):
+        model = os.environ.get("GROQ_MODEL", "").strip() or "llama-3.3-70b-versatile"
+        return {"provider": "groq", "label": f"Groq ({model})", "key": key,
+                "model": model, "base_url": "https://api.groq.com/openai/v1"}
+    model = os.environ.get("XAI_MODEL", "").strip() or "grok-4.3"
+    return {"provider": "xai", "label": f"Grok ({model})", "key": key,
+            "model": model, "base_url": "https://api.x.ai/v1"}
+
+
+def _build_llm(cfg: dict):
+    """Build a LangChain chat model for the resolved provider (OpenAI-compatible for Groq)."""
+    if cfg["provider"] == "xai":
+        from langchain_xai import ChatXAI  # lazy import: no key => never imported
+        return ChatXAI(model=cfg["model"], temperature=0, timeout=30, max_retries=1)
+    from langchain_openai import ChatOpenAI  # Groq speaks the OpenAI API
+    return ChatOpenAI(model=cfg["model"], api_key=cfg["key"], base_url=cfg["base_url"],
+                      temperature=0, timeout=30, max_retries=1)
+
+
+def _llm_insight(facts: dict, llm) -> str:
+    """Ask the LLM to phrase the pre-computed facts. Raises on any failure (caller falls back)."""
     prompt = (
         "You are an FC finance analyst. Using ONLY the JSON facts below, write a concise "
         "2-4 sentence alert. Do NOT invent or recompute any numbers; use the ones given. "
@@ -127,12 +155,10 @@ def generate_insights(
 ) -> tuple[list[dict], bool]:
     """Produce one insight per anomalous (FC, date). Returns (insights, llm_used).
 
-    Tries Grok when XAI_API_KEY is set (capped at MAX_LLM_CALLS); always falls back to a
-    deterministic template on any error or when no key is present.
+    Tries the configured LLM (Groq or xAI, auto-detected) when a key is set, capped at
+    MAX_LLM_CALLS; always falls back to a deterministic template on any error or with no key.
     """
-    api_key = os.environ.get("XAI_API_KEY", "").strip()
-    model = os.environ.get("XAI_MODEL", "grok-4.3").strip() or "grok-4.3"
-    use_llm = bool(api_key)
+    llm_cfg = resolve_llm()
 
     insights: list[dict] = []
     llm_used = False
@@ -141,10 +167,26 @@ def generate_insights(
     if anomalies_df.empty:
         return insights, llm_used
 
-    # One insight per (FC, date) that has any anomaly.
-    keyed = anomalies_df.groupby(["FC", "Date"], sort=False)
+    # Build the model once (reused across days). If it can't be built, stay on template.
+    llm = None
+    if llm_cfg is not None:
+        try:
+            llm = _build_llm(llm_cfg)
+        except Exception:  # noqa: BLE001
+            llm = None
 
-    for (fc, date), day_anoms in keyed:
+    # One insight per (FC, date) that has any anomaly. Spend the limited LLM budget on the
+    # most notable days first (Red/Blue, then Yellow, then Green; latest dates first) so the
+    # important insights are AI-written and only routine ones fall back to the template.
+    colour_by_key = {(r["FC"], r["Date"]): r["Colour"] for _, r in pnl_df.iterrows()}
+    severity = {"Red": 0, "Blue": 1, "Yellow": 2, "Green": 3}
+    groups = list(anomalies_df.groupby(["FC", "Date"], sort=False))
+    # Stable sort: first by date descending, then by severity ascending. Because Python's sort
+    # is stable, severity wins overall while latest dates stay first within each severity band.
+    groups.sort(key=lambda g: str(g[0][1]), reverse=True)
+    groups.sort(key=lambda g: severity.get(colour_by_key.get(g[0], "Green"), 3))
+
+    for (fc, date), day_anoms in groups:
         match = pnl_df[(pnl_df["FC"] == fc) & (pnl_df["Date"] == date)]
         if match.empty:
             continue
@@ -153,9 +195,9 @@ def generate_insights(
         facts = _facts_for_day(pnl_row, day_anoms, config)
 
         text = None
-        if use_llm and llm_calls < MAX_LLM_CALLS:
+        if llm is not None and llm_calls < MAX_LLM_CALLS:
             try:
-                text = _llm_insight(facts, model)
+                text = _llm_insight(facts, llm)
                 llm_used = True
                 llm_calls += 1
             except Exception:  # noqa: BLE001 - any LLM problem => template fallback

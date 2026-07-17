@@ -92,8 +92,9 @@ with st.sidebar:
 
     st.divider()
     import os
-    key_set = bool(os.environ.get("XAI_API_KEY", "").strip())
-    st.caption(f"Grok LLM: {'🟢 key found' if key_set else '⚪ not set (template mode)'}")
+    from agent.insights import resolve_llm
+    llm_cfg = resolve_llm()
+    st.caption(f"LLM: {'🟢 ' + llm_cfg['label'] if llm_cfg else '⚪ not set (template mode)'}")
     st.caption(f"Email mode: **{os.environ.get('EMAIL_MODE', 'outbox')}**")
 
 
