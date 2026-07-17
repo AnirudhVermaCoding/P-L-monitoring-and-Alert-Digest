@@ -1,0 +1,11 @@
+# Prozo Case Study 3 — Daily FC P&L Monitor
+# Pinned to versions verified working on Python 3.12–3.14 (July 2026).
+streamlit>=1.59,<2
+langgraph>=1.2,<2
+langchain-xai>=1.2,<2
+langchain-core>=1.4,<2
+pandas>=2.2
+openpyxl>=3.1
+plotly>=6.0
+python-dotenv>=1.0
+pyyaml>=6.0

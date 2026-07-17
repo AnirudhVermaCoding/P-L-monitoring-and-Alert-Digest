@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime artifacts
+*.db
+outputs/outbox/
+outputs/runs/
+outputs/_uploads/
+outputs/_streamlit.log
+
+# Keep curated deliverables (outputs/sample_outbox/, computed_pnl.*, anomalies_log.csv)
+
+# OS
+.DS_Store
+Thumbs.db

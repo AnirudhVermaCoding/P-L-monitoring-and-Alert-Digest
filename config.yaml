@@ -1,0 +1,40 @@
+# Business rules and routing for the FC P&L monitor.
+# Editable by a non-technical user. All ranges are % of revenue.
+
+# Per-line-item target ranges (from the "Ideal FC Criteria" sheet).
+targets:
+  Manpower:          {min: 25, max: 27}
+  Packaging:         {min: 5,  max: 7}
+  Power and Fuel:    {min: 10, max: 12}
+  FC Rent:           {min: 15, max: 18}
+  Equipment Rentals: {min: 5,  max: 8}
+  Overheads:         {min: 10, max: 12}
+
+# Contribution-margin target bands and the allowed +/- deviation (percentage points).
+margins:
+  cm1: {min: 65, max: 70, tolerance_pp: 3}   # breach if CM1% < 62 or > 73
+  cm2: {min: 15, max: 30, tolerance_pp: 3}   # breach if CM2% < 12 or > 33
+
+# Daily colour code thresholds for CM2% (see brief).
+colors:
+  red_below: 12        # CM2 < 12        -> Red
+  yellow_low: 15       # 12 <= CM2 < 15  -> Yellow
+  green_high: 30       # 15 <= CM2 <= 30 -> Green
+  yellow_high: 33      # 30 < CM2 <= 33  -> Yellow
+  # CM2 > 33           -> Blue (suspicious: check for under-reported costs)
+
+# Who gets notified when a specific cost line breaches its range.
+# Replace with real addresses. Defaults are safe example.com placeholders.
+owners:
+  Manpower:          ops.manpower@example.com
+  Packaging:         ops.packaging@example.com
+  Power and Fuel:    ops.utilities@example.com
+  FC Rent:           finance.rent@example.com
+  Equipment Rentals: ops.equipment@example.com
+  Overheads:         finance.overheads@example.com
+
+# Who gets the daily colour-coded digest for each FC.
+fc_managers:
+  default: fc.leadership@example.com
+  FC-Delhi:  manager.delhi@example.com
+  FC-Mumbai: manager.mumbai@example.com
