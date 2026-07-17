@@ -123,7 +123,8 @@ def digest_node(state: PnlState) -> dict:
 def notify_node(state: PnlState) -> dict:
     _emit(state, "Dispatching notifications…")
     cfg = state["config"]
-    log = dispatch(state["digests"], state["anomalies_df"], cfg, state["run_date"])
+    log = dispatch(state["digests"], state["anomalies_df"], state["pnl_df"], cfg,
+                   state["run_date"])
     return {"notifications": log, "progress": f"{len(log)} notifications dispatched"}
 
 

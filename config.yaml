@@ -38,3 +38,9 @@ fc_managers:
   default: fc.leadership@example.com
   FC-Delhi:  manager.delhi@example.com
   FC-Mumbai: manager.mumbai@example.com
+
+# How owner alerts are batched, so nobody gets one email per breach.
+notifications:
+  scope: latest_day        # latest_day = alert on each FC's most recent day only; all_days = whole batch
+  materiality_pp: 1.0      # a line item must breach its range by >= this many pp to page its owner
+  always_page_cm_breach: true   # reserved: CM1/CM2 breaches always matter (surfaced via the FC digest)

@@ -20,6 +20,13 @@ LINE_ITEMS = [
     "Overheads",
 ]
 
+# Defaults for the optional `notifications` section (keeps old configs working).
+DEFAULT_NOTIFICATIONS = {
+    "scope": "latest_day",       # latest_day | all_days
+    "materiality_pp": 1.0,       # min pp beyond range for a line-item breach to page its owner
+    "always_page_cm_breach": True,
+}
+
 
 @dataclass
 class Config:
@@ -28,6 +35,7 @@ class Config:
     colors: dict[str, float]
     owners: dict[str, str]
     fc_managers: dict[str, str]
+    notifications: dict = field(default_factory=lambda: dict(DEFAULT_NOTIFICATIONS))
     raw: dict = field(default_factory=dict)
 
     def target_range_str(self, line_item: str) -> str:
@@ -57,11 +65,14 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         if item not in data["targets"]:
             raise ValueError(f"config.yaml targets is missing line item '{item}'")
 
+    notifications = {**DEFAULT_NOTIFICATIONS, **(data.get("notifications") or {})}
+
     return Config(
         targets=data["targets"],
         margins=data["margins"],
         colors=data["colors"],
         owners=data["owners"],
         fc_managers=data["fc_managers"],
+        notifications=notifications,
         raw=data,
     )

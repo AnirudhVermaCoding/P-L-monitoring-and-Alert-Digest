@@ -93,8 +93,19 @@ can start a run, close the tab, and come back to find it done.
 ### Notification routing (as requested)
 When a cost line breaches its range, the **owner of that line item** is emailed
 (`config.yaml → owners`): Manpower → ops.manpower, Packaging → ops.packaging, and so on.
-Alerts are **grouped one email per owner per FC per day** so nobody gets 50 separate mails on
-a bad day. Each FC manager separately receives the daily colour digest (`config.yaml → fc_managers`).
+Each FC manager separately receives the daily colour digest (`config.yaml → fc_managers`).
+
+To keep this signal-not-noise, owner alerts are **rolled up and thresholded**
+(`config.yaml → notifications`):
+- **One summary email per owner**, listing all their breaches — never one email per breach.
+- **Materiality threshold** (`materiality_pp`, default 1.0): an owner is paged only when a line
+  item is at least that many percentage points beyond its range. Smaller breaches still appear in
+  the anomalies log and dashboard — they just don't page anyone.
+- **Scope** (`scope`, default `latest_day`): a daily monitor alerts on each FC's most recent day.
+  Set `all_days` to summarise an entire backfilled batch (still one email per owner).
+
+On the 100-day sample this turns ~380 would-be emails into a handful (one summary per breaching
+owner for the monitored day, plus one digest per FC).
 
 ---
 
@@ -163,10 +174,12 @@ Secrets live only in `.env`, which is gitignored. No keys are committed.
 
 ## Known limitations & what I'd improve with more time
 
-- **Email volume on very breachy data.** The 100-day sample breaches most days, so a full run
-  produces hundreds of grouped emails. In production I'd add per-owner daily rollups (one
-  summary email listing all their FCs/days) and a severity threshold so only material breaches
-  page someone.
+- **Notification tuning is global.** Owner alerts are now rolled up to one summary email per
+  owner with a materiality threshold and day-scope (see Notification routing), which keeps the
+  count small. Remaining gaps: the threshold is a single global `materiality_pp` rather than
+  per-line-item, and there's no cross-run de-duplication/snooze — re-running the same day would
+  re-notify. A production version would persist "already paged" state and support per-owner
+  quiet hours.
 - **Dates.** The sample has no dates, only day numbers; I map FC-Delhi's days onto a real
   calendar ending 2026-07-17 for realism. Real feeds should carry actual dates.
 - **Single-node SQLite.** Fine for one machine / one operator; a multi-user deployment would

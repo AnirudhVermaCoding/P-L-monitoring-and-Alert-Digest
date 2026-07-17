@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agent.graph import run_pipeline  # noqa: E402
+from core.config import load_config  # noqa: E402
 from core.jobstore import get_job, start as start_thread  # noqa: E402
 from core.memory import (  # noqa: E402
     add_override,
@@ -253,6 +254,13 @@ with tab_anom:
 
 with tab_notif:
     st.subheader("Notifications dispatched")
+    n_cfg = load_config().notifications
+    st.caption(
+        f"Alerts are rolled up to **one summary email per owner**, scoped to "
+        f"**{n_cfg.get('scope', 'latest_day').replace('_', ' ')}**, and owners are paged only "
+        f"for breaches **≥ {n_cfg.get('materiality_pp', 1.0):g}pp** beyond range. Every breach "
+        f"(material or not) is still in the Anomalies tab. Configure in `config.yaml`."
+    )
     if notifications:
         log_df = pd.DataFrame(
             [{k: n.get(k) for k in ("to", "subject", "kind", "status", "mode", "detail")}

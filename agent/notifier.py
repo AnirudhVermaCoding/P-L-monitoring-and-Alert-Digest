@@ -63,28 +63,90 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
     return digests
 
 
-def _owner_messages(anomalies_df: pd.DataFrame, config: Config) -> list[dict]:
-    """One grouped email per (owner, FC, date) covering that owner's breached line items."""
+def _line_deviation(row: pd.Series, config: Config) -> float:
+    """pp by which a line-item anomaly is outside its target range (0 if in range)."""
+    item = row["Line Item"]
+    t = config.targets.get(item)
+    if t is None:
+        return 0.0
+    pct = row["% of Revenue"]
+    if pct > t["max"]:
+        return pct - t["max"]
+    if pct < t["min"]:
+        return t["min"] - pct
+    return 0.0
+
+
+def _in_scope_dates(pnl_df: pd.DataFrame, scope: str) -> dict[str, set]:
+    """Which dates each FC should page on. latest_day => only that FC's most recent day."""
+    scoped: dict[str, set] = {}
+    for fc, grp in pnl_df.groupby("FC", sort=False):
+        if scope == "latest_day":
+            scoped[fc] = {grp["Date"].max()}
+        else:
+            scoped[fc] = set(grp["Date"])
+    return scoped
+
+
+def _owner_messages(anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
+                    config: Config) -> list[dict]:
+    """ONE summary email per owner, listing only their MATERIAL breaches within scope.
+
+    Sub-threshold breaches stay in the anomalies log / dashboard but don't page anyone. This
+    replaces the old one-email-per-(owner, FC, date) behaviour that produced hundreds of mails.
+    """
+    if anomalies_df.empty:
+        return []
+
+    scope = config.notifications.get("scope", "latest_day")
+    threshold = float(config.notifications.get("materiality_pp", 1.0))
+    scoped_dates = _in_scope_dates(pnl_df, scope)
+
     line_anoms = anomalies_df[~anomalies_df["Line Item"].isin(["CM1%", "CM2%"])]
+
+    # owner -> list of (fc, date, item, pct, dev, direction, target)
+    by_owner: dict[str, list[dict]] = {}
+    for _, a in line_anoms.iterrows():
+        fc, date = a["FC"], a["Date"]
+        if date not in scoped_dates.get(fc, set()):
+            continue
+        dev = _line_deviation(a, config)
+        if dev < threshold:  # not material — logged, but don't page
+            continue
+        owner = config.owner_for(a["Line Item"])
+        by_owner.setdefault(owner, []).append({
+            "fc": fc, "date": date, "item": a["Line Item"],
+            "pct": a["% of Revenue"], "dev": dev,
+            "direction": "above max" if a["Status"] == "ABOVE_MAX" else "below min",
+            "target": a["Target Range"],
+        })
+
     messages = []
-    for (fc, date), grp in line_anoms.groupby(["FC", "Date"], sort=False):
-        # Group by owner within the day.
-        by_owner: dict[str, list[str]] = {}
-        for _, a in grp.iterrows():
-            owner = config.owner_for(a["Line Item"])
-            by_owner.setdefault(owner, []).append(
-                f"- {a['Line Item']}: {a['% of Revenue']:.1f}% "
-                f"(target {a['Target Range']}, {a['Status'].replace('_',' ').lower()})"
-            )
-        for owner, items in by_owner.items():
-            subject = f"[P&L Alert] {fc} {date}: {len(items)} cost line(s) out of range"
-            body = (
-                f"Cost line item(s) breached target on {date} at {fc}:\n\n"
-                + "\n".join(items)
-                + "\n\nPlease review and confirm whether this is expected."
-            )
-            messages.append({"to": owner, "subject": subject, "body": body,
-                             "fc": fc, "date": date, "kind": "owner_alert"})
+    for owner, breaches in by_owner.items():
+        items = sorted({b["item"] for b in breaches})
+        # Group the body by FC -> date for readability.
+        lines: list[str] = []
+        for fc in sorted({b["fc"] for b in breaches}):
+            lines.append(f"{fc}:")
+            fc_breaches = [b for b in breaches if b["fc"] == fc]
+            for b in sorted(fc_breaches, key=lambda x: (str(x["date"]), -x["dev"])):
+                lines.append(
+                    f"  - {b['date']}  {b['item']}: {b['pct']:.1f}% "
+                    f"({b['direction']} by {b['dev']:.1f}pp, target {b['target']})"
+                )
+        subject = (f"[P&L Alert] {', '.join(items)} — "
+                   f"{len(breaches)} material breach(es) to review")
+        body = (
+            f"You own: {', '.join(items)}.\n"
+            f"The following breached the target range by at least {threshold:g}pp "
+            f"(scope: {scope.replace('_', ' ')}):\n\n"
+            + "\n".join(lines)
+            + "\n\nSmaller (sub-threshold) breaches, if any, are in the P&L dashboard's "
+            "Anomalies tab. Please review and confirm whether this is expected."
+        )
+        rep = breaches[0]
+        messages.append({"to": owner, "subject": subject, "body": body,
+                         "fc": rep["fc"], "date": rep["date"], "kind": "owner_alert"})
     return messages
 
 
@@ -137,11 +199,11 @@ def _send_smtp(msg: dict) -> None:
         server.send_message(email)
 
 
-def dispatch(digests: dict[str, str], anomalies_df: pd.DataFrame, config: Config,
-             run_date: str) -> list[dict]:
-    """Deliver all owner alerts + FC digests. Returns a send log for the UI."""
+def dispatch(digests: dict[str, str], anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
+             config: Config, run_date: str) -> list[dict]:
+    """Deliver rolled-up owner alerts + FC digests. Returns a send log for the UI."""
     mode = os.environ.get("EMAIL_MODE", "outbox").strip().lower()
-    messages = _owner_messages(anomalies_df, config) + _digest_messages(digests, config)
+    messages = _owner_messages(anomalies_df, pnl_df, config) + _digest_messages(digests, config)
 
     log: list[dict] = []
     for msg in messages:
