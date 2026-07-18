@@ -9,12 +9,27 @@ the plain-language insight, and one recommended action.
 from __future__ import annotations
 
 COLOUR_HEX = {"Red": "#d64545", "Yellow": "#d9a441", "Green": "#2e9e5b", "Blue": "#3b7dd8"}
+# Soft backgrounds for the "bottom line" band — the tint carries the status at a glance.
+COLOUR_TINT = {"Red": "#fdecec", "Yellow": "#fdf6e6", "Green": "#e9f7ef", "Blue": "#eaf1fb"}
 COLOUR_WORD = {
     "Red": "Margin below threshold",
     "Yellow": "Borderline margin",
     "Green": "Healthy",
     "Blue": "Unusually high — verify costs",
 }
+
+
+def _verdict(colour: str, has_breach: bool) -> str:
+    """The single sentence a busy manager reads first. No jargon, states the call."""
+    if colour == "Red":
+        return "Margin is below target — needs a look today."
+    if colour == "Blue":
+        return "Margin is unusually high — check no costs are missing."
+    if colour == "Yellow":
+        return "Margin is borderline — worth keeping an eye on."
+    if has_breach:  # Green overall, but a cost line is out of range
+        return "Margin is healthy, but one cost line is over budget."
+    return "All healthy — no action needed today."
 _INK = "#1f2933"
 _MUTED = "#6b7280"
 _BORDER = "#e5e7eb"
@@ -67,19 +82,61 @@ def _metric(label: str, value: str, colour: str = _INK) -> str:
     )
 
 
+def _fact_row(label: str, value: str, strong: bool = False) -> str:
+    """One key: value line in the at-a-glance block."""
+    colour = _INK if strong else _MUTED
+    weight = "700" if strong else "500"
+    return (
+        f'<tr>'
+        f'<td style="padding:6px 0;width:120px;vertical-align:top;color:{_MUTED};'
+        f'font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">{label}</td>'
+        f'<td style="padding:6px 0;color:{colour};font-size:14px;font-weight:{weight};'
+        f'line-height:1.4;">{value}</td>'
+        f'</tr>'
+    )
+
+
 def render_digest_html(d: dict) -> str:
-    """Beautiful daily digest for an FC manager. `d` is the structured digest dict."""
+    """Daily digest for a busy FC manager. Built to be read top-down in ~10 seconds:
+    a colour header, a one-line verdict, the biggest issue and the one action, the headline
+    numbers — then the longer narrative demoted to an optional 'Detail' block below."""
     colour = d["colour"]
     accent = COLOUR_HEX.get(colour, _INK)
+    tint = COLOUR_TINT.get(colour, _BG)
     rev = f'₹{int(d["revenue"]):,}'
     cm2 = f'{d["cm2"]:.1f}%'
     cm1 = f'{d["cm1"]:.1f}%'
+    largest_breach = d.get("largest_breach", "None")
+    action = d.get("action", "")
+    has_breach = bool(largest_breach) and largest_breach != "None"
 
     header = _header(accent, f'Daily P&L Digest · {colour}', d["fc"],
                      f'{d["date"]} · {COLOUR_WORD.get(colour, "")}')
 
+    # 1. The verdict — the first (and, for a busy reader, maybe only) thing they read.
+    verdict = (
+        f'<tr><td style="padding:20px 28px 4px;">'
+        f'<div style="background:{tint};border-left:4px solid {accent};'
+        f'padding:14px 18px;border-radius:8px;">'
+        f'<div style="color:{_MUTED};font-size:11px;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:0.8px;">Bottom line</div>'
+        f'<div style="color:{_INK};font-size:17px;font-weight:700;line-height:1.4;'
+        f'margin-top:5px;">{_verdict(colour, has_breach)}</div>'
+        f'</div></td></tr>'
+    )
+
+    # 2. The two facts that matter next: biggest issue + the one action.
+    facts = (
+        f'<tr><td style="padding:12px 28px 4px;">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        f'{_fact_row("Biggest issue", largest_breach if has_breach else "None — all cost lines in range", strong=has_breach)}'
+        f'{_fact_row("Do next", action or "—", strong=True)}'
+        f'</table></td></tr>'
+    )
+
+    # 3. Headline numbers (CM2 in the status colour).
     metrics = (
-        f'<tr><td style="padding:20px 28px 8px;">'
+        f'<tr><td style="padding:14px 28px 8px;">'
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;text-align:center;">'
         f'<tr>{_metric("Revenue", rev)}{_metric("CM1", cm1)}'
@@ -95,12 +152,13 @@ def render_digest_html(d: dict) -> str:
             f'padding:10px 14px;border-radius:6px;color:{_INK};font-size:13px;">'
             f'<b>Trend:</b> {d["trend"]}</div></td></tr>'
         )
+    # 4. The full narrative — demoted: muted, smaller, clearly optional for anyone in a hurry.
     if d.get("insight"):
         blocks += (
             f'<tr><td style="padding:14px 28px 6px;">'
             f'<div style="color:{_MUTED};font-size:11px;text-transform:uppercase;'
-            f'letter-spacing:0.6px;margin-bottom:6px;">What happened</div>'
-            f'<div style="color:{_INK};font-size:14px;line-height:1.55;">{d["insight"]}</div>'
+            f'letter-spacing:0.6px;margin-bottom:6px;">Detail (optional)</div>'
+            f'<div style="color:{_MUTED};font-size:13px;line-height:1.5;">{d["insight"]}</div>'
             f'</td></tr>'
         )
 
@@ -119,8 +177,8 @@ def render_digest_html(d: dict) -> str:
         f'{chips}</td></tr>'
     )
 
-    return _shell(header + metrics + blocks + window,
-                  preheader=f'{d["fc"]} {d["date"]}: CM2 {cm2} ({colour})')
+    return _shell(header + verdict + facts + metrics + blocks + window,
+                  preheader=f'{d["fc"]} {d["date"]}: {_verdict(colour, has_breach)}')
 
 
 def render_owner_html(owner_items: list[str], breaches: list[dict], threshold: float,

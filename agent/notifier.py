@@ -21,6 +21,7 @@ import pandas as pd
 
 from agent.email_templates import render_digest_html, render_owner_html
 from core.config import Config
+from core.engine import latest_status_by_fc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTBOX = REPO_ROOT / "outputs" / "outbox"
@@ -38,6 +39,9 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
     trend_notes = trend_notes or {}
     digests: dict[str, dict] = {}
     insight_by_key = {(i["FC"], i["Date"]): i["insight"] for i in insights}
+    # The at-a-glance verdict fields (biggest breach + one recommended action) for the busy
+    # manager come from the same pure helper the Simple view uses — one source of truth.
+    status_by_fc = {s["FC"]: s for s in latest_status_by_fc(pnl_df, insights)}
 
     for fc, fc_pnl in pnl_df.groupby("FC", sort=False):
         fc_pnl = fc_pnl.sort_values("Date")
@@ -47,15 +51,20 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
         trend = trend_notes.get(fc, "")
         latest_insight = insight_by_key.get((fc, latest["Date"]), "")
         counts = fc_pnl["Colour"].value_counts().to_dict()
+        status = status_by_fc.get(fc, {})
+        largest_breach = status.get("largest_breach", "None")
+        action = status.get("recommended_action", "")
 
         lines = [
             f"{emoji} {fc} — {latest['Date']}",
             f"Colour: {colour} | CM1%: {latest['CM1 %']:.1f} | CM2%: {latest['CM2 %']:.1f}",
+            f"Biggest issue: {largest_breach}",
+            f"Recommended: {action}",
         ]
         if trend:
             lines.append(f"Trend: {trend}")
         if latest_insight:
-            lines += ["", latest_insight]
+            lines += ["", "Detail: " + latest_insight]
         summary = ", ".join(f"{COLOUR_EMOJI.get(c,'')} {c}: {n}" for c, n in counts.items())
         lines += ["", f"Window summary ({len(fc_pnl)} days): {summary}"]
 
@@ -63,6 +72,7 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
             "fc": fc, "date": latest["Date"], "colour": colour,
             "cm1": float(latest["CM1 %"]), "cm2": float(latest["CM2 %"]),
             "revenue": float(latest["Revenue"]), "trend": trend, "insight": latest_insight,
+            "largest_breach": largest_breach, "action": action,
             "window_counts": counts, "window_days": int(len(fc_pnl)),
             "text": "\n".join(lines),
         }
