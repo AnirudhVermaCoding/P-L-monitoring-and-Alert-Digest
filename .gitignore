@@ -19,3 +19,6 @@ outputs/_streamlit.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime test fixtures
+data/bad_inputs/_*

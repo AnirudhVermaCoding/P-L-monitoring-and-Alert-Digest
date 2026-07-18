@@ -31,7 +31,7 @@ class PnlState(TypedDict, total=False):
     pnl_df: pd.DataFrame
     anomalies_df: pd.DataFrame
     insights: list[dict]
-    digests: dict[str, str]
+    digests: dict[str, dict]
     notifications: list[dict]
     trend_notes: dict[str, str]
     llm_used: bool

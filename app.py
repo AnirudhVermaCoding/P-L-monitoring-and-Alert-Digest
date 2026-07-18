@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # override=True so the .env file is the single source of truth — otherwise a stale
@@ -297,7 +298,10 @@ with tab_notif:
                    "outputs/outbox/ — open a few below.")
         for n in notifications[:8]:
             with st.expander(f"{n['kind']} → {n['to']}: {n['subject']}"):
-                st.code(n.get("body", ""), language="text")
+                if n.get("html"):
+                    components.html(n["html"], height=520, scrolling=True)
+                else:
+                    st.code(n.get("body", ""), language="text")
     else:
         st.info("No notifications generated (no anomalies).")
 

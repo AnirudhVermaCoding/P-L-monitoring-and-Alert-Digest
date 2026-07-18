@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from agent.email_templates import render_digest_html, render_owner_html
 from core.config import Config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -28,10 +29,14 @@ COLOUR_EMOJI = {"Red": "🔴", "Yellow": "🟡", "Green": "🟢", "Blue": "🔵"
 
 
 def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: list[dict],
-                  config: Config, trend_notes: dict[str, str] | None = None) -> dict[str, str]:
-    """One colour-coded digest string per FC (its most recent day headline + issues)."""
+                  config: Config, trend_notes: dict[str, str] | None = None) -> dict[str, dict]:
+    """One structured colour-coded digest per FC (its most recent day + window rollup).
+
+    Returns {fc: {...}} where each dict carries the fields the HTML email needs plus a plain
+    `text` version used as the outbox/UI fallback.
+    """
     trend_notes = trend_notes or {}
-    digests: dict[str, str] = {}
+    digests: dict[str, dict] = {}
     insight_by_key = {(i["FC"], i["Date"]): i["insight"] for i in insights}
 
     for fc, fc_pnl in pnl_df.groupby("FC", sort=False):
@@ -39,27 +44,28 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
         latest = fc_pnl.iloc[-1]
         colour = latest["Colour"]
         emoji = COLOUR_EMOJI.get(colour, "")
+        trend = trend_notes.get(fc, "")
+        latest_insight = insight_by_key.get((fc, latest["Date"]), "")
+        counts = fc_pnl["Colour"].value_counts().to_dict()
 
         lines = [
             f"{emoji} {fc} — {latest['Date']}",
             f"Colour: {colour} | CM1%: {latest['CM1 %']:.1f} | CM2%: {latest['CM2 %']:.1f}",
         ]
-        trend = trend_notes.get(fc, "")
         if trend:
             lines.append(f"Trend: {trend}")
-
-        latest_insight = insight_by_key.get((fc, latest["Date"]))
         if latest_insight:
-            lines.append("")
-            lines.append(latest_insight)
-
-        # Roll up how the whole loaded window looked for this FC.
-        counts = fc_pnl["Colour"].value_counts().to_dict()
+            lines += ["", latest_insight]
         summary = ", ".join(f"{COLOUR_EMOJI.get(c,'')} {c}: {n}" for c, n in counts.items())
-        lines.append("")
-        lines.append(f"Window summary ({len(fc_pnl)} days): {summary}")
+        lines += ["", f"Window summary ({len(fc_pnl)} days): {summary}"]
 
-        digests[fc] = "\n".join(lines)
+        digests[fc] = {
+            "fc": fc, "date": latest["Date"], "colour": colour,
+            "cm1": float(latest["CM1 %"]), "cm2": float(latest["CM2 %"]),
+            "revenue": float(latest["Revenue"]), "trend": trend, "insight": latest_insight,
+            "window_counts": counts, "window_days": int(len(fc_pnl)),
+            "text": "\n".join(lines),
+        }
     return digests
 
 
@@ -144,38 +150,43 @@ def _owner_messages(anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
             + "\n\nSmaller (sub-threshold) breaches, if any, are in the P&L dashboard's "
             "Anomalies tab. Please review and confirm whether this is expected."
         )
+        html = render_owner_html(items, breaches, threshold, scope)
         rep = breaches[0]
-        messages.append({"to": owner, "subject": subject, "body": body,
+        messages.append({"to": owner, "subject": subject, "body": body, "html": html,
                          "fc": rep["fc"], "date": rep["date"], "kind": "owner_alert"})
     return messages
 
 
-def _digest_messages(digests: dict[str, str], config: Config) -> list[dict]:
+def _digest_messages(digests: dict[str, dict], config: Config) -> list[dict]:
     messages = []
     for fc, digest in digests.items():
-        # Colour word lives on the "Colour: X | ..." line. Find that line, not a fixed index.
-        colour = "Green"
-        colour_line = next((ln for ln in digest.split("\n") if ln.startswith("Colour:")), "")
-        for tag in COLOUR_EMOJI:
-            if tag in colour_line:
-                colour = tag
-                break
+        colour = digest.get("colour", "Green")
         subject = f"[{colour}] Daily P&L digest — {fc}"
         messages.append({"to": config.manager_for(fc), "subject": subject,
-                         "body": digest, "fc": fc, "date": "digest", "kind": "digest"})
+                         "body": digest["text"], "html": render_digest_html(digest),
+                         "fc": fc, "date": "digest", "kind": "digest"})
     return messages
 
 
 def _write_outbox(msg: dict, run_date: str) -> Path:
+    """Write the email to the outbox. Prefers a .html file (renders the real design in a
+    browser); falls back to .md plain text when a message has no HTML body."""
     day_dir = OUTBOX / run_date
     day_dir.mkdir(parents=True, exist_ok=True)
     safe_to = msg["to"].replace("@", "_at_").replace(".", "_")
     safe_subj = "".join(c if c.isalnum() or c in " -_" else "_" for c in msg["subject"])[:60]
-    path = day_dir / f"{msg['kind']}__{safe_to}__{safe_subj}.md"
-    path.write_text(
-        f"To: {msg['to']}\nSubject: {msg['subject']}\n\n{msg['body']}\n",
-        encoding="utf-8",
-    )
+    stem = f"{msg['kind']}__{safe_to}__{safe_subj}"
+
+    if msg.get("html"):
+        path = day_dir / f"{stem}.html"
+        meta = (f'<div style="font-family:sans-serif;font-size:12px;color:#6b7280;'
+                f'padding:8px 12px;">To: {msg["to"]} · Subject: {msg["subject"]}</div>')
+        path.write_text(meta + msg["html"], encoding="utf-8")
+    else:
+        path = day_dir / f"{stem}.md"
+        path.write_text(
+            f"To: {msg['to']}\nSubject: {msg['subject']}\n\n{msg['body']}\n", encoding="utf-8"
+        )
     return path
 
 
@@ -196,14 +207,16 @@ def _send_smtp(msg: dict) -> None:
     email["From"] = sender
     email["To"] = msg["to"]
     email["Subject"] = msg["subject"]
-    email.set_content(msg["body"])
+    email.set_content(msg["body"])  # plain-text fallback for non-HTML clients
+    if msg.get("html"):
+        email.add_alternative(msg["html"], subtype="html")
     with smtplib.SMTP(host, port, timeout=30) as server:
         server.starttls()
         server.login(user, password)
         server.send_message(email)
 
 
-def dispatch(digests: dict[str, str], anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
+def dispatch(digests: dict[str, dict], anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
              config: Config, run_date: str) -> list[dict]:
     """Deliver rolled-up owner alerts + FC digests. Returns a send log for the UI."""
     mode = os.environ.get("EMAIL_MODE", "outbox").strip().lower()
@@ -228,5 +241,6 @@ def dispatch(digests: dict[str, str], anomalies_df: pd.DataFrame, pnl_df: pd.Dat
             record["mode"] = "outbox"
             record["detail"] = f"SMTP failed ({exc}); wrote {path.relative_to(REPO_ROOT)}"
         record["body"] = msg["body"]
+        record["html"] = msg.get("html", "")
         log.append(record)
     return log
