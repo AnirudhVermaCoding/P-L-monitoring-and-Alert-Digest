@@ -184,7 +184,11 @@ def _send_smtp(msg: dict) -> None:
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER", "")
     password = os.environ.get("SMTP_PASSWORD", "")
-    sender = os.environ.get("SMTP_FROM", user or "pnl-monitor@example.com")
+    # Gmail requires the From to be the authenticated account, so ignore a blank or
+    # placeholder SMTP_FROM and fall back to the login user.
+    sender = os.environ.get("SMTP_FROM", "").strip()
+    if not sender or sender.endswith("example.com"):
+        sender = user
     if not host or not user or not password:
         raise RuntimeError("SMTP_HOST/SMTP_USER/SMTP_PASSWORD not fully configured")
 

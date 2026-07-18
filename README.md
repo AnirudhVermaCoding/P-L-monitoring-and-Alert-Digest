@@ -77,6 +77,17 @@ clean error instead of crashing (`agent/graph.py`). Each node updates a `progres
 the UI can show live status. LangGraph makes the stages explicit and easy to extend (e.g.
 add a "escalate" node) and keeps the LLM step isolated and swappable.
 
+**Adaptive to the input format.** The loader tolerates messy real-world files — the header
+can be on any of the first rows, the first column can be blank, column names can vary
+("Manpower Cost" ≈ "Manpower", "Power & Fuel" ≈ "Power and Fuel"), and `FC`/`Date` columns
+are optional. Target ranges are also read *from the input* when supplied (`core/criteria.py`):
+- a **second sheet** in the data workbook (e.g. the sample's "Ideal FC Criteria" sheet) is
+  detected and used automatically, or
+- a **separate criteria file** can be uploaded alongside the data.
+Ranges are parsed flexibly (`25 - 27%`, `25% - 27%`, `10 to 12`, en/em dashes). If no criteria
+table is found anywhere, it falls back to `config.yaml`. The dashboard states which source was
+used. This means the app adapts to *the evaluator's* targets, not just the ones I hardcoded.
+
 **Free path is the default, not an afterthought.**
 - **No `XAI_API_KEY`** → insights come from a deterministic template that produces the same
   structure as the LLM (deviation, breached items, ranked contributors, recommended action).
@@ -153,8 +164,12 @@ curated set of example emails in `outputs/sample_outbox/`.
 
 ```bash
 python -m tests.test_engine
+python -m tests.test_criteria
 ```
-Hand-computed checks for CM1/CM2, colour bands, the four scenarios, and contributor ranking.
+`test_engine` — hand-computed checks for CM1/CM2, colour bands, the four scenarios, and
+contributor ranking. `test_criteria` — target-range parsing from a 2-sheet workbook, a
+separate file, alternative spellings, and the guard that a day-wise data sheet is *not*
+mistaken for criteria.
 
 ---
 

@@ -21,9 +21,11 @@ from core.loader import LoaderError, load_pnl
 
 
 class PnlState(TypedDict, total=False):
-    source: str                 # file path to load
+    source: str                 # file path to load (day-wise data)
+    criteria_source: str        # optional separate file holding target ranges
     run_date: str               # label for outbox folder
     config: Config
+    criteria_info: dict         # which targets came from the input vs config.yaml
     apply_overrides: bool
     raw_df: pd.DataFrame
     pnl_df: pd.DataFrame
@@ -53,11 +55,33 @@ def ingest_node(state: PnlState) -> dict:
     _emit(state, "Loading data…")
     try:
         raw = load_pnl(state["source"])
-        return {"raw_df": raw, "progress": "Data loaded"}
     except LoaderError as exc:
         return {"errors": [str(exc)], "progress": "Load failed"}
     except Exception as exc:  # noqa: BLE001
         return {"errors": [f"Unexpected error reading input: {exc}"], "progress": "Load failed"}
+
+    out: dict = {"raw_df": raw, "progress": "Data loaded"}
+
+    # Adaptive targets: prefer target ranges supplied WITH the input — either a separate
+    # criteria file, or another sheet inside the data workbook (e.g. "Ideal FC Criteria") —
+    # over config.yaml. Falls back silently to config.yaml when no criteria are found.
+    from dataclasses import replace
+    from core.criteria import extract_criteria
+
+    cfg = state["config"]
+    criteria = None
+    if state.get("criteria_source"):
+        criteria = extract_criteria(state["criteria_source"])
+    if criteria is None:
+        criteria = extract_criteria(state["source"])
+
+    if criteria:
+        out["config"] = replace(cfg, targets={**cfg.targets, **criteria})
+        out["criteria_info"] = {"source": "input file", "targets": criteria}
+        _emit(state, f"Using target ranges from the input file ({len(criteria)} line items)")
+    else:
+        out["criteria_info"] = {"source": "config.yaml", "targets": {}}
+    return out
 
 
 def compute_node(state: PnlState) -> dict:
@@ -156,12 +180,17 @@ def build_graph():
 
 
 def run_pipeline(source: str, run_date: str = "run", config: Optional[Config] = None,
-                 apply_overrides: bool = True,
+                 apply_overrides: bool = True, criteria_source: Optional[str] = None,
                  progress_cb: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
-    """Execute the full graph once and return the final state dict."""
+    """Execute the full graph once and return the final state dict.
+
+    criteria_source: optional path to a separate file with target ranges. When omitted, the
+    data file's own sheets are still scanned for an 'Ideal FC Criteria' table.
+    """
     graph = build_graph()
     state: PnlState = {
         "source": source,
+        "criteria_source": criteria_source or "",
         "run_date": run_date,
         "config": config or load_config(),
         "apply_overrides": apply_overrides,

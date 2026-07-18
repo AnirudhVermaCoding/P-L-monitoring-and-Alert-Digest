@@ -46,7 +46,7 @@ init_db()
 
 # --------------------------- background worker ---------------------------
 
-def _start_job(source: str) -> str:
+def _start_job(source: str, criteria_source: str | None = None) -> str:
     """Kick off the pipeline on a daemon thread. The worker never touches st.*."""
 
     def worker(job_id: str) -> None:
@@ -56,7 +56,8 @@ def _start_job(source: str) -> str:
             job["progress"] = msg
 
         try:
-            result = run_pipeline(source, run_date=RUN_DATE, progress_cb=progress)
+            result = run_pipeline(source, run_date=RUN_DATE, criteria_source=criteria_source,
+                                  progress_cb=progress)
             if result.get("errors"):
                 job["status"] = "error"
                 job["error"] = "; ".join(result["errors"])
@@ -84,7 +85,13 @@ with st.sidebar:
     st.header("📊 FC P&L Monitor")
     st.caption("Upload daily cost & revenue data, or use the bundled sample.")
 
-    uploaded = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
+    uploaded = st.file_uploader("Upload daily P&L (CSV or Excel)", type=["csv", "xlsx"])
+    criteria_file = st.file_uploader(
+        "Target ranges (optional — only if separate from the data)",
+        type=["csv", "xlsx"],
+        help="Leave empty if your ranges are a sheet in the data file, or to use config.yaml. "
+             "The 'Ideal FC Criteria' sheet inside the data workbook is picked up automatically.",
+    )
 
     st.markdown("**…or use bundled data:**")
     use_sample = st.button("Sample workbook (100 days, 1 FC)")
@@ -102,22 +109,30 @@ with st.sidebar:
 # one-shot. st.file_uploader, however, returns the file on EVERY rerun — so we must guard
 # it with a signature check, or the post-completion st.rerun() would relaunch the job in a
 # loop.
+def _save_upload(upload) -> str:
+    """Persist an uploaded file to scratch and return its path."""
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    dest = SCRATCH / upload.name
+    dest.write_bytes(upload.getbuffer())
+    return str(dest)
+
+
+# An optional separate criteria file travels with whichever data source is run.
+criteria_path = _save_upload(criteria_file) if criteria_file is not None else None
+
 source_to_run = None
 if uploaded is not None:
-    sig = f"{uploaded.name}:{uploaded.size}"
+    sig = f"{uploaded.name}:{uploaded.size}:{getattr(criteria_file, 'name', '')}"
     if st.session_state.get("last_upload_sig") != sig:
         st.session_state["last_upload_sig"] = sig
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        dest = SCRATCH / uploaded.name
-        dest.write_bytes(uploaded.getbuffer())
-        source_to_run = str(dest)
+        source_to_run = _save_upload(uploaded)
 elif use_sample:
     source_to_run = str(DATA_DIR / "Case Study 3.xlsx")
 elif use_extended:
     source_to_run = str(DATA_DIR / "extended_test_data.csv")
 
 if source_to_run:
-    st.session_state["job_id"] = _start_job(source_to_run)
+    st.session_state["job_id"] = _start_job(source_to_run, criteria_path)
     st.session_state["source_name"] = Path(source_to_run).name
 
 
@@ -192,6 +207,14 @@ tab_dash, tab_pnl, tab_anom, tab_notif, tab_over = st.tabs(
 )
 
 with tab_dash:
+    crit = result.get("criteria_info", {})
+    if crit.get("source") == "input file":
+        st.success(f"🎯 Target ranges read from the **input file** "
+                   f"({len(crit.get('targets', {}))} line items) — overriding config.yaml.")
+    else:
+        st.caption("🎯 Target ranges: using **config.yaml** defaults "
+                   "(no criteria table found in the input).")
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Days analysed", len(pnl))
     c2.metric("🔴 Red days", int((pnl["Colour"] == "Red").sum()))
