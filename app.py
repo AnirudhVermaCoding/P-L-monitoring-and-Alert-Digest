@@ -26,6 +26,7 @@ load_dotenv(override=True)
 
 from agent.graph import run_pipeline  # noqa: E402
 from core.config import load_config  # noqa: E402
+from core.engine import latest_status_by_fc  # noqa: E402
 from core.jobstore import get_job, start as start_thread  # noqa: E402
 from core.memory import (  # noqa: E402
     add_override,
@@ -196,15 +197,23 @@ def _current_result():
 # --------------------------- main panel ---------------------------
 
 st.title("Daily FC P&L Monitor & Alert Digest")
+st.caption("**Case Study 3** — Upload → Analyse → View FC colour status → Download report / Send digest")
 _progress_area()
 
 result = _current_result()
 
 if result is None:
     st.markdown(
-        "Pick a data source in the sidebar to begin. The monitor computes CM1/CM2, "
-        "flags any day where a cost line or margin breaches its target, writes a "
-        "plain-language alert, and routes emails to the right owner."
+        "**How it works — 4 steps:**  \n"
+        "1. **Upload** your daily P&L file in the sidebar (or click a bundled sample below it).  \n"
+        "2. **Analyse** runs automatically once a file is chosen.  \n"
+        "3. **View** each FC's colour status, main reason, and recommended action.  \n"
+        "4. **Download** the report or review the digest emails."
+    )
+    st.caption(
+        "Under the hood the monitor computes CM1/CM2, flags any day where a cost line or "
+        "margin breaches its target, writes a plain-language alert, and routes emails to the "
+        "right owner."
     )
     hist = get_history()
     if not hist.empty:
@@ -217,6 +226,70 @@ anoms = result["anomalies_df"]
 insights = result["insights"]
 notifications = result["notifications"]
 
+# Two ways to read the same results: a plain-English Simple view (default, for a
+# non-technical evaluator) and the full Advanced tabs. The block switcher sits on top.
+view = st.segmented_control(
+    "View", ["🟢 Simple", "🔧 Advanced"], default="🟢 Simple",
+    label_visibility="collapsed", key="view_mode",
+    help="Simple = one plain-English status card per FC. Advanced = full tables, charts, "
+         "insights, notifications and overrides.",
+)
+view = view or "🟢 Simple"  # segmented_control returns None if the pill is deselected
+
+if view == "🟢 Simple":
+    summary = latest_status_by_fc(pnl, insights)
+
+    st.subheader("FC colour status — latest day")
+    counts = {c: sum(1 for s in summary if s["Colour"] == c)
+              for c in ("Red", "Yellow", "Green", "Blue")}
+    m = st.columns(4)
+    m[0].metric("🔴 Red", counts["Red"], help="Margin severely compressed")
+    m[1].metric("🟡 Yellow", counts["Yellow"], help="Borderline")
+    m[2].metric("🟢 Green", counts["Green"], help="Healthy")
+    m[3].metric("🔵 Blue", counts["Blue"], help="Suspiciously high — check for missing costs")
+
+    for s in summary:
+        chip = COLOUR_HEX.get(s["Colour"], "#888")
+        with st.container(border=True):
+            head = st.columns([2, 5])
+            head[0].markdown(
+                f"### {s['FC']}<br><span style='background:{chip};color:white;padding:3px 12px;"
+                f"border-radius:6px;font-size:0.85rem'>{s['Colour']}</span>",
+                unsafe_allow_html=True,
+            )
+            head[1].markdown(
+                f"**Status:** {s['Colour']} · CM2 {s['cm2_pct']:.1f}%  \n"
+                f"**Main reason:** {s['main_reason']}  \n"
+                f"**Largest cost breach:** {s['largest_breach']}  \n"
+                f"**Recommended action:** {s['recommended_action']}"
+            )
+
+    st.divider()
+    st.subheader("Report & digest")
+    st.download_button(
+        "⬇️ Download report (CSV)", pnl.to_csv(index=False).encode("utf-8"),
+        "computed_pnl.csv", "text/csv",
+    )
+    if notifications:
+        mode = notifications[0].get("mode", "outbox")
+        verb = "sent" if mode == "smtp" else "written to the demo outbox (no real email sent)"
+        st.caption(f"✉️ {len(notifications)} digest / alert email(s) were {verb} during "
+                   "analysis — one summary per owner. Preview below.")
+        log_df = pd.DataFrame(
+            [{k: n.get(k) for k in ("to", "subject", "kind", "status", "mode")}
+             for n in notifications]
+        )
+        st.dataframe(log_df, width="stretch")
+        preview = next((n for n in notifications if n.get("html")), None)
+        if preview:
+            with st.expander(f"Preview: {preview['subject']}"):
+                components.html(preview["html"], height=480, scrolling=True)
+    else:
+        st.caption("✉️ No emails were needed — no material breaches on the latest day.")
+
+    st.stop()  # Simple view is complete; skip the Advanced tabs below.
+
+# ---- Advanced view: the full tabbed dashboard (unchanged) ----
 tab_dash, tab_pnl, tab_anom, tab_notif, tab_over = st.tabs(
     ["📈 Dashboard", "🧮 P&L", "🚩 Anomalies", "✉️ Notifications", "⚙️ Overrides"]
 )

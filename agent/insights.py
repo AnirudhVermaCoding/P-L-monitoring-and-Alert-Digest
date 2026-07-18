@@ -13,7 +13,7 @@ import os
 import pandas as pd
 
 from core.config import Config
-from core.engine import contributors_for_day
+from core.engine import contributors_for_day, recommended_action
 
 # Cap LLM calls to stay well within any free tier.
 MAX_LLM_CALLS = 20
@@ -89,13 +89,7 @@ def fallback_insight(facts: dict) -> str:
         )
         lines.append(f"Top contributors by impact: {ranked}.")
 
-    if facts["suspicious"]:
-        action = "Recommend a cost-completeness audit — verify no invoices are missing."
-    elif cm2 < 12:
-        action = "Recommend an urgent cost audit of the top contributors above."
-    else:
-        action = "Recommend the line-item owner review and correct the breach."
-    lines.append(action)
+    lines.append(recommended_action(facts["colour"], has_breach=bool(breached_items)))
 
     return " ".join(lines)
 

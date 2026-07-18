@@ -8,8 +8,15 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agent.insights import generate_insights
 from core.config import load_config
-from core.engine import colour_for_cm2, compute_pnl, contributors_for_day, detect_anomalies
+from core.engine import (
+    colour_for_cm2,
+    compute_pnl,
+    contributors_for_day,
+    detect_anomalies,
+    latest_status_by_fc,
+)
 
 
 def approx(a: float, b: float, tol: float = 0.05) -> bool:
@@ -101,12 +108,56 @@ def test_contributors_sorted():
     print("PASS test_contributors_sorted")
 
 
+def test_latest_status_by_fc():
+    """Simple-view summary: one row per FC at its latest date, breach-aware action."""
+    cfg = load_config()
+    rev = 100000
+
+    def row(date, fc, mp, pk, pf, rent, eq, oh):
+        return {"Date": date, "FC": fc, "Revenue": rev,
+                "Manpower": mp * rev, "Packaging": pk * rev, "Power and Fuel": pf * rev,
+                "FC Rent": rent * rev, "Equipment Rentals": eq * rev, "Overheads": oh * rev}
+
+    healthy = (0.26, 0.06, 0.11, 0.165, 0.065, 0.11)  # CM2 ~23%, Green, no breach
+    df = pd.DataFrame([
+        # FC-A: an earlier healthy day (must be ignored) then a Red latest day.
+        row("2026-07-16", "FC-A", *healthy),
+        row("2026-07-17", "FC-A", 0.30, 0.08, 0.16, 0.18, 0.07, 0.13),   # CM2 ~8% -> Red
+        # FC-B: healthy Green latest day, no breach.
+        row("2026-07-17", "FC-B", *healthy),
+        # FC-C: Green latest day that still carries a Manpower breach (Day-5 shape).
+        row("2026-07-17", "FC-C", 0.29, 0.06, 0.11, 0.165, 0.065, 0.11),  # CM2 ~20% Green
+    ])
+    pnl = compute_pnl(df, cfg)
+    anoms = detect_anomalies(pnl, cfg)
+    insights, _ = generate_insights(pnl, anoms, cfg)  # no key -> template facts, no network
+    by_fc = {s["FC"]: s for s in latest_status_by_fc(pnl, insights)}
+
+    assert set(by_fc) == {"FC-A", "FC-B", "FC-C"}, by_fc
+
+    a = by_fc["FC-A"]
+    assert a["Date"] == "2026-07-17", a            # latest, not the earlier healthy day
+    assert a["Colour"] == "Red", a
+    assert a["largest_breach"] != "None" and "target" in a["largest_breach"], a
+    assert a["recommended_action"] == "Urgent cost audit of the top contributor.", a
+
+    b = by_fc["FC-B"]
+    assert b["Colour"] == "Green" and b["largest_breach"] == "None", b
+    assert b["recommended_action"] == "No action needed.", b
+
+    c = by_fc["FC-C"]  # the subtle case: healthy colour, real breach -> still an action
+    assert c["Colour"] == "Green" and c["largest_breach"].startswith("Manpower"), c
+    assert c["recommended_action"] == "Line-item owner to review the flagged cost.", c
+    print("PASS test_latest_status_by_fc")
+
+
 def run_all():
     test_day1_sample()
     test_clean_day()
     test_blue_suspicious()
     test_colour_bands()
     test_contributors_sorted()
+    test_latest_status_by_fc()
     print("\nALL ENGINE TESTS PASSED")
 
 

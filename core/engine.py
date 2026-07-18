@@ -138,3 +138,69 @@ def contributors_for_day(pnl_row: pd.Series, config: Config) -> list[dict]:
         })
     out.sort(key=lambda d: d["impact_value"], reverse=True)
     return out
+
+
+def recommended_action(colour: str, has_breach: bool = False) -> str:
+    """One crisp next-step. Single source of truth for the phrasing used by both the
+    plain-language insight (agent/insights.py) and the Simple view (app.py).
+
+    A Green day can still carry a line-item breach (healthy CM2, one cost over its band);
+    has_breach keeps that case from reading "No action needed" while a breach is on screen.
+    """
+    if colour == "Red":
+        return "Urgent cost audit of the top contributor."
+    if colour == "Blue":
+        return "Cost-completeness audit — check for missing invoices."
+    if colour == "Green" and not has_breach:
+        return "No action needed."
+    return "Line-item owner to review the flagged cost."
+
+
+def latest_status_by_fc(pnl_df: pd.DataFrame, insights: list[dict]) -> list[dict]:
+    """One plain-English status row per FC, for that FC's latest date. Pure; no I/O, no Streamlit.
+
+    Built for the non-technical Simple view: every FC is shown (healthy ones included), so the
+    healthy days — which have no insight entry — are derived from pnl_df directly.
+
+    Returns list of dicts: FC, Date, Colour, cm2_pct, main_reason, largest_breach,
+    recommended_action.
+    """
+    # Latest row per FC. ISO date strings sort correctly; fall back to as-is order otherwise.
+    latest = pnl_df.sort_values("Date").groupby("FC", sort=False).tail(1)
+
+    # Index the anomaly-only insights by (FC, Date) so healthy FCs simply miss the lookup.
+    facts_by_key = {(i["FC"], i["Date"]): i["facts"] for i in insights}
+
+    rows: list[dict] = []
+    for _, r in latest.iterrows():
+        fc, date, colour = r["FC"], r["Date"], r["Colour"]
+        cm2 = float(r["CM2 %"])
+        facts = facts_by_key.get((fc, date))
+
+        if colour == "Red":
+            main_reason = f"Margin compressed: CM2 {cm2:.1f}% is below the 15% target."
+        elif colour == "Blue":
+            main_reason = f"Suspiciously high CM2 {cm2:.1f}% — possible under-reported costs."
+        elif colour == "Yellow":
+            main_reason = f"Borderline: CM2 {cm2:.1f}% is near the edge of the healthy band."
+        else:  # Green
+            main_reason = f"Healthy: CM2 {cm2:.1f}%, all costs within range."
+
+        top = facts["top_contributors"] if facts and facts["top_contributors"] else []
+        if top:
+            c = top[0]
+            largest_breach = (f"{c['line_item']} {c['pct']:.1f}% "
+                              f"(target {c['target']}, {c['direction']} {c['deviation_pp']:.1f}pp)")
+        else:
+            largest_breach = "None"
+
+        rows.append({
+            "FC": fc,
+            "Date": date,
+            "Colour": colour,
+            "cm2_pct": round(cm2, 2),
+            "main_reason": main_reason,
+            "largest_breach": largest_breach,
+            "recommended_action": recommended_action(colour, has_breach=bool(top)),
+        })
+    return rows
