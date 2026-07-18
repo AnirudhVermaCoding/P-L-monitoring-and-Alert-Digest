@@ -26,9 +26,9 @@ colors:
 # Who gets notified when a specific cost line breaches its range.
 # NOTE: these are live recipient inboxes used for the smtp email demo. Edit to suit.
 owners:
-  Manpower:          shalinisharma71359@gmail.com
+  Manpower:          cashivangagrawal@gmail.com
   Packaging:         anirudhverma712007@gmail.com
-  Power and Fuel:    anirudhverma712007@gmail.com
+  Power and Fuel:    shalinisharma71359@gmail.com
   FC Rent:           anirudhverma712007@gmail.com
   Equipment Rentals: anirudhverma712007@gmail.com
   Overheads:         anirudhverma712007@gmail.com
@@ -36,7 +36,7 @@ owners:
 # Who gets the daily colour-coded digest for each FC.
 fc_managers:
   default: anirudhverma712007@gmail.com
-  FC-Delhi:  anirudhverma712007@gmail.com
+  FC-Delhi:  cashivangagrawal@gmail.com
   FC-Mumbai: anirudhverma712007@gmail.com
 
 # How owner alerts are batched, so nobody gets one email per breach.
