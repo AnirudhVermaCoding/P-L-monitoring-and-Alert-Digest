@@ -18,7 +18,9 @@ import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True so the .env file is the single source of truth — otherwise a stale
+# EMAIL_MODE/XAI_API_KEY left in the process environment would silently win over .env.
+load_dotenv(override=True)
 
 from agent.graph import run_pipeline  # noqa: E402
 from core.config import load_config  # noqa: E402

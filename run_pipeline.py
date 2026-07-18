@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # .env is the single source of truth
 
 from agent.graph import run_pipeline  # noqa: E402
 from core.memory import init_db, record_daily_results, record_run  # noqa: E402
