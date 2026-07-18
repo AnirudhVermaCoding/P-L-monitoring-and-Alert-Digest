@@ -96,6 +96,50 @@ def _fact_row(label: str, value: str, strong: bool = False) -> str:
     )
 
 
+def _drivers_block(facts: dict) -> str:
+    """The 'why' as a small scannable table (ranked cost drivers), not a paragraph.
+
+    Uses the pre-computed, revenue-weighted top contributors. Returns "" when there is no
+    single cost driver (e.g. a pure margin swing) so the caller can fall back to the text.
+    """
+    contribs = (facts or {}).get("top_contributors") or []
+    if not contribs:
+        return ""
+    rows = ""
+    for c in contribs:
+        over = c["direction"] == "above max"
+        sev = COLOUR_HEX["Red"] if c["deviation_pp"] >= 3 else COLOUR_HEX["Yellow"]
+        rows += (
+            f'<tr>'
+            f'<td style="padding:9px 12px;border-bottom:1px solid {_BORDER};font-size:13px;'
+            f'color:{_INK};font-weight:600;">{c["line_item"]}</td>'
+            f'<td style="padding:9px 12px;border-bottom:1px solid {_BORDER};font-size:13px;'
+            f'color:{_INK};text-align:right;">{c["pct"]:.1f}%</td>'
+            f'<td style="padding:9px 12px;border-bottom:1px solid {_BORDER};font-size:13px;'
+            f'color:{_MUTED};text-align:center;">{c["target"]}</td>'
+            f'<td style="padding:9px 12px;border-bottom:1px solid {_BORDER};text-align:right;'
+            f'font-size:13px;color:{sev};font-weight:700;white-space:nowrap;">'
+            f'{c["deviation_pp"]:.1f}pp {"over" if over else "under"}</td>'
+            f'</tr>'
+        )
+    heads = "".join(
+        f'<th align="{al}" style="padding:8px 12px;font-size:11px;color:{_MUTED};'
+        f'text-transform:uppercase;letter-spacing:0.5px;">{lbl}</th>'
+        for lbl, al in (("Cost line", "left"), ("Actual", "right"),
+                        ("Target", "center"), ("vs target", "right"))
+    )
+    return (
+        f'<tr><td style="padding:14px 28px 6px;">'
+        f'<div style="color:{_MUTED};font-size:11px;text-transform:uppercase;'
+        f'letter-spacing:0.6px;margin-bottom:8px;">What\'s driving it</div>'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border-collapse:collapse;border:1px solid {_BORDER};border-radius:8px;'
+        f'overflow:hidden;">'
+        f'<tr style="background:{_BG};">{heads}</tr>{rows}</table>'
+        f'</td></tr>'
+    )
+
+
 def render_digest_html(d: dict) -> str:
     """Daily digest for a busy FC manager. Built to be read top-down in ~10 seconds:
     a colour header, a one-line verdict, the biggest issue and the one action, the headline
@@ -152,12 +196,16 @@ def render_digest_html(d: dict) -> str:
             f'padding:10px 14px;border-radius:6px;color:{_INK};font-size:13px;">'
             f'<b>Trend:</b> {d["trend"]}</div></td></tr>'
         )
-    # 4. The full narrative — demoted: muted, smaller, clearly optional for anyone in a hurry.
-    if d.get("insight"):
+    # 4. The "why", structured: a ranked driver table beats a paragraph of numbers. Only a
+    # margin-only day with no single cost driver falls back to the muted narrative.
+    drivers = _drivers_block(d.get("facts") or {})
+    if drivers:
+        blocks += drivers
+    elif d.get("insight"):
         blocks += (
             f'<tr><td style="padding:14px 28px 6px;">'
             f'<div style="color:{_MUTED};font-size:11px;text-transform:uppercase;'
-            f'letter-spacing:0.6px;margin-bottom:6px;">Detail (optional)</div>'
+            f'letter-spacing:0.6px;margin-bottom:6px;">Detail</div>'
             f'<div style="color:{_MUTED};font-size:13px;line-height:1.5;">{d["insight"]}</div>'
             f'</td></tr>'
         )

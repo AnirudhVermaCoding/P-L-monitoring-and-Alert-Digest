@@ -39,6 +39,7 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
     trend_notes = trend_notes or {}
     digests: dict[str, dict] = {}
     insight_by_key = {(i["FC"], i["Date"]): i["insight"] for i in insights}
+    facts_by_key = {(i["FC"], i["Date"]): i.get("facts") for i in insights}
     # The at-a-glance verdict fields (biggest breach + one recommended action) for the busy
     # manager come from the same pure helper the Simple view uses — one source of truth.
     status_by_fc = {s["FC"]: s for s in latest_status_by_fc(pnl_df, insights)}
@@ -54,6 +55,8 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
         status = status_by_fc.get(fc, {})
         largest_breach = status.get("largest_breach", "None")
         action = status.get("recommended_action", "")
+        latest_facts = facts_by_key.get((fc, latest["Date"]))
+        drivers = (latest_facts or {}).get("top_contributors") or []
 
         lines = [
             f"{emoji} {fc} — {latest['Date']}",
@@ -63,7 +66,14 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
         ]
         if trend:
             lines.append(f"Trend: {trend}")
-        if latest_insight:
+        if drivers:  # a clean list beats the free-text paragraph
+            lines += ["", "What's driving it:"]
+            for c in drivers:
+                lines.append(
+                    f"  - {c['line_item']}: {c['pct']:.1f}% (target {c['target']}, "
+                    f"{c['deviation_pp']:.1f}pp {'over' if c['direction'] == 'above max' else 'under'})"
+                )
+        elif latest_insight:  # fallback for margin-only days with no single cost driver
             lines += ["", "Detail: " + latest_insight]
         summary = ", ".join(f"{COLOUR_EMOJI.get(c,'')} {c}: {n}" for c, n in counts.items())
         lines += ["", f"Window summary ({len(fc_pnl)} days): {summary}"]
@@ -72,7 +82,7 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
             "fc": fc, "date": latest["Date"], "colour": colour,
             "cm1": float(latest["CM1 %"]), "cm2": float(latest["CM2 %"]),
             "revenue": float(latest["Revenue"]), "trend": trend, "insight": latest_insight,
-            "largest_breach": largest_breach, "action": action,
+            "largest_breach": largest_breach, "action": action, "facts": latest_facts,
             "window_counts": counts, "window_days": int(len(fc_pnl)),
             "text": "\n".join(lines),
         }
