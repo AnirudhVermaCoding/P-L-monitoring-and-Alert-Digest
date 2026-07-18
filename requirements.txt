@@ -3,6 +3,7 @@
 streamlit>=1.59,<2
 langgraph>=1.2,<2
 langchain-xai>=1.2,<2
+langchain-openai>=1.1,<2
 langchain-core>=1.4,<2
 pandas>=2.2
 openpyxl>=3.1

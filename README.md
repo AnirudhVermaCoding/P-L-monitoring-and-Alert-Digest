@@ -40,6 +40,20 @@ python run_pipeline.py "data/Case Study 3.xlsx" # runs on the original sample
 ```
 Outputs land in `outputs/` (computed P&L, anomalies log) and `outputs/outbox/` (emails).
 
+### Deploy on Streamlit Community Cloud (free)
+
+1. Push this repo to GitHub (already done for the hosted copy).
+2. Go to https://share.streamlit.io → **Create app** → **Deploy a public app from GitHub**.
+3. Repo: your fork; Branch: `main`; Main file path: `app.py`.
+4. Under **Advanced settings**, set **Python version 3.13**.
+5. (Optional) Under **Secrets**, paste any of these — the app reads them like env vars:
+   ```toml
+   XAI_API_KEY = "gsk_...or xai-..."   # enables LLM-written insights (else template)
+   EMAIL_MODE = "outbox"               # keep outbox for a public demo (don't send real mail)
+   ```
+   Leave Secrets empty and it still runs fully (template insights, file-outbox emails).
+6. **Deploy.** No keys are needed for it to work.
+
 ---
 
 ## What it does (maps to the brief)

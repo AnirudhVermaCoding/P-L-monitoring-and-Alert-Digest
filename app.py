@@ -10,6 +10,7 @@ Per the Streamlit multithreading docs, the worker thread does NOT call any st.* 
 """
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from pathlib import Path
 
@@ -44,6 +45,17 @@ RUN_DATE = "2026-07-17"
 COLOUR_HEX = {"Red": "#e74c3c", "Yellow": "#f1c40f", "Green": "#2ecc71", "Blue": "#3498db"}
 
 st.set_page_config(page_title="FC P&L Monitor", page_icon="📊", layout="wide")
+
+# On Streamlit Community Cloud there is no .env file — secrets are configured in the app's
+# Secrets manager and surfaced via st.secrets. Mirror them into os.environ so the pipeline
+# (which reads os.environ for XAI_API_KEY / EMAIL_MODE / SMTP_*) works identically to local.
+try:
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str):
+            os.environ.setdefault(_k, _v)
+except Exception:  # noqa: BLE001 - no secrets configured is fine (falls back to defaults)
+    pass
+
 init_db()
 
 
