@@ -47,7 +47,8 @@ def main() -> int:
     pnl.to_csv(OUTPUTS / "computed_pnl.csv", index=False)
     anoms.to_csv(OUTPUTS / "anomalies_log.csv", index=False)
     try:
-        pnl.to_excel(OUTPUTS / "computed_pnl.xlsx", index=False)
+        from core.report import build_report_xlsx
+        (OUTPUTS / "fc_pnl_report.xlsx").write_bytes(build_report_xlsx(pnl, anoms))
     except Exception as exc:  # noqa: BLE001
         print(f"  (xlsx export skipped: {exc})")
 

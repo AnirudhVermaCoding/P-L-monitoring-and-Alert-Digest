@@ -151,6 +151,24 @@ def test_latest_status_by_fc():
     print("PASS test_latest_status_by_fc")
 
 
+def test_anomalies_have_colour():
+    """The anomalies log carries the FC's daily colour on every row."""
+    cfg = load_config()
+    df = pd.DataFrame([{
+        "Date": "Day 1", "FC": "FC-1", "Revenue": 112453,
+        "Manpower": 34221, "Packaging": 8769, "Power and Fuel": 14467,
+        "FC Rent": 16846, "Equipment Rentals": 5034, "Overheads": 13134,
+    }])
+    pnl = compute_pnl(df, cfg)
+    anoms = detect_anomalies(pnl, cfg)
+    assert "Colour" in anoms.columns, anoms.columns.tolist()
+    assert list(anoms.columns)[:6] == [
+        "Date", "FC", "Line Item", "% of Revenue", "Target Range", "Status"], anoms.columns.tolist()
+    # Every row's colour equals that FC/day's computed colour (Green here).
+    assert set(anoms["Colour"]) == {"Green"}, set(anoms["Colour"])
+    print("PASS test_anomalies_have_colour")
+
+
 def run_all():
     test_day1_sample()
     test_clean_day()
@@ -158,6 +176,7 @@ def run_all():
     test_colour_bands()
     test_contributors_sorted()
     test_latest_status_by_fc()
+    test_anomalies_have_colour()
     print("\nALL ENGINE TESTS PASSED")
 
 

@@ -54,15 +54,17 @@ def _margin_bounds(config: Config, key: str) -> tuple[float, float]:
 def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """Return the flagged-anomalies log.
 
-    Columns: Date | FC | Line Item | % of Revenue | Target Range | Status.
+    Columns: Date | FC | Line Item | % of Revenue | Target Range | Status | Colour.
     Status is one of BELOW_MIN, ABOVE_MAX, CM1_BREACH, CM2_BREACH, SUSPICIOUS_HIGH.
+    Colour is the FC's daily CM2 colour for that date, so each breach carries the day's
+    overall severity (Red/Yellow/Green/Blue) alongside it.
     """
     rows: list[dict] = []
     cm1_lo, cm1_hi = _margin_bounds(config, "cm1")
     cm2_lo, cm2_hi = _margin_bounds(config, "cm2")
 
     for _, r in pnl_df.iterrows():
-        date, fc = r["Date"], r["FC"]
+        date, fc, colour = r["Date"], r["FC"], r["Colour"]
 
         for item in LINE_ITEMS:
             pct = r[f"{item} %"]
@@ -77,7 +79,7 @@ def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
                     "Date": date, "FC": fc, "Line Item": item,
                     "% of Revenue": round(pct, 2),
                     "Target Range": config.target_range_str(item),
-                    "Status": status,
+                    "Status": status, "Colour": colour,
                 })
 
         cm1 = r["CM1 %"]
@@ -86,7 +88,7 @@ def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
                 "Date": date, "FC": fc, "Line Item": "CM1%",
                 "% of Revenue": round(cm1, 2),
                 "Target Range": f"{config.margins['cm1']['min']:g}-{config.margins['cm1']['max']:g}%",
-                "Status": "CM1_BREACH",
+                "Status": "CM1_BREACH", "Colour": colour,
             })
 
         cm2 = r["CM2 %"]
@@ -95,17 +97,17 @@ def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
                 "Date": date, "FC": fc, "Line Item": "CM2%",
                 "% of Revenue": round(cm2, 2),
                 "Target Range": f"{config.margins['cm2']['min']:g}-{config.margins['cm2']['max']:g}%",
-                "Status": "CM2_BREACH",
+                "Status": "CM2_BREACH", "Colour": colour,
             })
         elif cm2 > cm2_hi:
             rows.append({
                 "Date": date, "FC": fc, "Line Item": "CM2%",
                 "% of Revenue": round(cm2, 2),
                 "Target Range": f"{config.margins['cm2']['min']:g}-{config.margins['cm2']['max']:g}%",
-                "Status": "SUSPICIOUS_HIGH",
+                "Status": "SUSPICIOUS_HIGH", "Colour": colour,
             })
 
-    cols = ["Date", "FC", "Line Item", "% of Revenue", "Target Range", "Status"]
+    cols = ["Date", "FC", "Line Item", "% of Revenue", "Target Range", "Status", "Colour"]
     return pd.DataFrame(rows, columns=cols)
 
 

@@ -11,7 +11,6 @@ Per the Streamlit multithreading docs, the worker thread does NOT call any st.* 
 from __future__ import annotations
 
 import os
-from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +26,7 @@ load_dotenv(override=True)
 from agent.graph import run_pipeline  # noqa: E402
 from core.config import load_config  # noqa: E402
 from core.engine import latest_status_by_fc  # noqa: E402
+from core.report import build_report_xlsx  # noqa: E402
 from core.jobstore import get_job, start as start_thread  # noqa: E402
 from core.memory import (  # noqa: E402
     add_override,
@@ -269,13 +269,16 @@ if view == "🟢 Simple":
     st.subheader("Report & digest")
     dl1, dl2 = st.columns(2)
     dl1.download_button(
-        "⬇️ Download P&L report (CSV)", pnl.to_csv(index=False).encode("utf-8"),
-        "computed_pnl.csv", "text/csv", width="stretch",
+        "⬇️ Full report (Excel, colour-coded)", build_report_xlsx(pnl, anoms),
+        "fc_pnl_report.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+        help="Two sheets — P&L and Anomalies — with the Colour column filled Red/Yellow/Green/Blue.",
     )
     dl2.download_button(
-        "⬇️ Download anomalies log (CSV)", anoms.to_csv(index=False).encode("utf-8"),
+        "⬇️ Anomalies log (CSV)", anoms.to_csv(index=False).encode("utf-8"),
         "anomalies_log.csv", "text/csv", width="stretch",
-        help="Date | FC | Line Item | % of Revenue | Target Range | Status",
+        help="Date | FC | Line Item | % of Revenue | Target Range | Status | Colour",
     )
     if notifications:
         mode = notifications[0].get("mode", "outbox")
@@ -345,16 +348,16 @@ with tab_pnl:
     st.dataframe(pnl, width="stretch")
     csv = pnl.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Download P&L (CSV)", csv, "computed_pnl.csv", "text/csv")
-    buf = BytesIO()
-    pnl.to_excel(buf, index=False)
     st.download_button(
-        "⬇️ Download P&L (Excel)", buf.getvalue(), "computed_pnl.xlsx",
+        "⬇️ Download full report (Excel, colour-coded)", build_report_xlsx(pnl, anoms),
+        "fc_pnl_report.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="P&L + Anomalies sheets, with the Colour column filled Red/Yellow/Green/Blue.",
     )
 
 with tab_anom:
     st.subheader("Flagged anomalies log")
-    st.caption("Date | FC | Line Item | % of Revenue | Target Range | Status")
+    st.caption("Date | FC | Line Item | % of Revenue | Target Range | Status | Colour")
     st.dataframe(anoms, width="stretch")
     st.download_button("⬇️ Download anomalies (CSV)",
                        anoms.to_csv(index=False).encode("utf-8"),
