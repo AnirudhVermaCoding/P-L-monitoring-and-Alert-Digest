@@ -45,7 +45,8 @@ RUN_DATE = "2026-07-17"
 
 COLOUR_HEX = {"Red": "#e74c3c", "Yellow": "#f1c40f", "Green": "#2ecc71", "Blue": "#3498db"}
 
-st.set_page_config(page_title="FC P&L Monitor", page_icon="📊", layout="wide")
+st.set_page_config(page_title="FC P&L Monitor", page_icon="📊", layout="wide",
+                   initial_sidebar_state="expanded")
 
 # On Streamlit Community Cloud there is no .env file — secrets are configured in the app's
 # Secrets manager and surfaced via st.secrets. Mirror them into os.environ so the pipeline
