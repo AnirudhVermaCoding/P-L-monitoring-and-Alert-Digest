@@ -267,9 +267,15 @@ if view == "🟢 Simple":
 
     st.divider()
     st.subheader("Report & digest")
-    st.download_button(
-        "⬇️ Download report (CSV)", pnl.to_csv(index=False).encode("utf-8"),
-        "computed_pnl.csv", "text/csv",
+    dl1, dl2 = st.columns(2)
+    dl1.download_button(
+        "⬇️ Download P&L report (CSV)", pnl.to_csv(index=False).encode("utf-8"),
+        "computed_pnl.csv", "text/csv", width="stretch",
+    )
+    dl2.download_button(
+        "⬇️ Download anomalies log (CSV)", anoms.to_csv(index=False).encode("utf-8"),
+        "anomalies_log.csv", "text/csv", width="stretch",
+        help="Date | FC | Line Item | % of Revenue | Target Range | Status",
     )
     if notifications:
         mode = notifications[0].get("mode", "outbox")

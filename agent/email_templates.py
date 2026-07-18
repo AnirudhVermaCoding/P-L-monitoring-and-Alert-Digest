@@ -96,6 +96,40 @@ def _fact_row(label: str, value: str, strong: bool = False) -> str:
     )
 
 
+def _cm2_legend(colors: dict) -> str:
+    """A compact CM2% colour-band key so the window chips explain themselves.
+
+    Built from the live config thresholds (red_below / yellow_low / green_high / yellow_high)
+    so the legend always matches the rules the engine actually applies.
+    """
+    if not colors:
+        return ""
+    r = colors.get("red_below", 12)
+    yl = colors.get("yellow_low", 15)
+    gh = colors.get("green_high", 30)
+    yh = colors.get("yellow_high", 33)
+    bands = [
+        ("Red", f"&lt; {r:g}%"),
+        ("Yellow", f"{r:g}–{yl:g}% or {gh:g}–{yh:g}%"),
+        ("Green", f"{yl:g}–{gh:g}%"),
+        ("Blue", f"&gt; {yh:g}%"),
+    ]
+    parts = ""
+    for name, rng in bands:
+        dot = (f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+               f'background:{COLOUR_HEX.get(name, "#999")};margin-right:5px;"></span>')
+        parts += (
+            f'<span style="display:inline-block;margin:2px 14px 2px 0;color:{_MUTED};'
+            f'font-size:12px;white-space:nowrap;">{dot}'
+            f'<b style="color:{_INK};">{name}</b> {rng}</span>'
+        )
+    return (
+        f'<div style="margin-top:12px;padding-top:10px;border-top:1px solid {_BORDER};">'
+        f'<div style="color:{_MUTED};font-size:10px;text-transform:uppercase;'
+        f'letter-spacing:0.6px;margin-bottom:6px;">CM2% colour bands</div>{parts}</div>'
+    )
+
+
 def _drivers_block(facts: dict) -> str:
     """The 'why' as a small scannable table (ranked cost drivers), not a paragraph.
 
@@ -218,11 +252,13 @@ def render_digest_html(d: dict) -> str:
             f'color:#fff;font-size:12px;font-weight:600;padding:3px 10px;border-radius:12px;'
             f'margin:2px 4px 2px 0;">{c}: {n}</span>'
         )
+    # CM2% band legend, so the chips are self-explanatory (what does "Red" mean?).
+    legend = _cm2_legend(d.get("cm2_colors") or {})
     window = (
         f'<tr><td style="padding:14px 28px 24px;">'
         f'<div style="color:{_MUTED};font-size:11px;text-transform:uppercase;'
         f'letter-spacing:0.6px;margin-bottom:8px;">Last {d.get("window_days", 0)} days</div>'
-        f'{chips}</td></tr>'
+        f'{chips}{legend}</td></tr>'
     )
 
     return _shell(header + verdict + facts + metrics + blocks + window,

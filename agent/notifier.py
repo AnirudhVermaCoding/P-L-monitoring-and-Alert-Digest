@@ -84,6 +84,7 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
             "revenue": float(latest["Revenue"]), "trend": trend, "insight": latest_insight,
             "largest_breach": largest_breach, "action": action, "facts": latest_facts,
             "window_counts": counts, "window_days": int(len(fc_pnl)),
+            "cm2_colors": config.colors,
             "text": "\n".join(lines),
         }
     return digests
