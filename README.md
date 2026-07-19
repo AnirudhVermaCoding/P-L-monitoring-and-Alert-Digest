@@ -31,7 +31,8 @@ streamlit run app.py
 ```
 
 Then in the browser: click **"Extended test data (2 FCs, all scenarios)"** in the sidebar
-→ watch progress → explore the Dashboard / P&L / Anomalies / Notifications / Overrides tabs.
+→ review detected FCs, targets, and recipients → **Run analysis** → inspect the notification
+drafts → explicitly send/write them → explore the result views.
 
 **Prefer the command line?**
 ```bash
@@ -91,16 +92,14 @@ clean error instead of crashing (`agent/graph.py`). Each node updates a `progres
 the UI can show live status. LangGraph makes the stages explicit and easy to extend (e.g.
 add a "escalate" node) and keeps the LLM step isolated and swappable.
 
-**Adaptive to the input format.** The loader tolerates messy real-world files — the header
-can be on any of the first rows, the first column can be blank, column names can vary
-("Manpower Cost" ≈ "Manpower", "Power & Fuel" ≈ "Power and Fuel"), and `FC`/`Date` columns
-are optional. Target ranges are also read *from the input* when supplied (`core/criteria.py`):
-- a **second sheet** in the data workbook (e.g. the sample's "Ideal FC Criteria" sheet) is
-  detected and used automatically, or
-- a **separate criteria file** can be uploaded alongside the data.
-Ranges are parsed flexibly (`25 - 27%`, `25% - 27%`, `10 to 12`, en/em dashes). If no criteria
-table is found anywhere, it falls back to `config.yaml`. The dashboard states which source was
-used. This means the app adapts to *the evaluator's* targets, not just the ones I hardcoded.
+**Adaptive multi-FC intake.** One uploader accepts any number of CSV/XLSX files and classifies
+every file/sheet as P&L, targets, both, or unrecognized (`core/intake.py`). A combined table may
+contain any number of FCs; separate per-FC tables can omit `FC`, in which case a filename/sheet
+inference is shown for confirmation. Targets may be global or per-FC and use long `Range` or
+`Min`/`Max` tables, FC matrices, per-FC files/sheets, or columns/sections embedded with P&L.
+Resolution is explicit: uploaded per-FC → uploaded global → `config.yaml`. The review screen
+shows the resolved range and provenance for every FC/item, rejects duplicate FC/date rows and
+conflicting ranges, and never silently guesses through a genuine ambiguity.
 
 **Free path is the default, not an afterthought.**
 - **No `XAI_API_KEY`** → insights come from a deterministic template that produces the same
@@ -116,9 +115,12 @@ progress is polled with an `st.fragment`, and every result is persisted to SQLit
 can start a run, close the tab, and come back to find it done.
 
 ### Notification routing (as requested)
-When a cost line breaches its range, the **owner of that line item** is emailed
-(`config.yaml → owners`): Manpower → ops.manpower, Packaging → ops.packaging, and so on.
-Each FC manager separately receives the daily colour digest (`config.yaml → fc_managers`).
+The web app collects one manager email per detected FC and one shared Manpower-owner email in
+session memory. It creates one digest draft per FC plus a rolled-up Manpower alert when that
+line has a material breach; other line-item breaches remain visible without creating UI owner
+mail. Analysis never sends. A separate reviewed-delivery action performs SMTP or writes the
+outbox, and reruns cannot re-send the same analysis. The CLI preserves the broader legacy
+`config.yaml → owners/fc_managers` routing and automatic delivery.
 
 To keep this signal-not-noise, owner alerts are **rolled up and thresholded**
 (`config.yaml → notifications`):
@@ -179,11 +181,16 @@ curated set of example emails in `outputs/sample_outbox/`.
 ```bash
 python -m tests.test_engine
 python -m tests.test_criteria
+python -m tests.test_intake
+python -m tests.test_notifications
+python -m tests.test_report
 ```
 `test_engine` — hand-computed checks for CM1/CM2, colour bands, the four scenarios, and
 contributor ranking. `test_criteria` — target-range parsing from a 2-sheet workbook, a
 separate file, alternative spellings, and the guard that a day-wise data sheet is *not*
-mistaken for criteria.
+mistaken for criteria. `test_intake` covers multi-file/multi-FC classification, target shapes,
+precedence, conflicts and duplicates. `test_notifications` covers run-scoped routing,
+review-before-send, and invalid-recipient protection.
 
 ---
 
@@ -210,12 +217,10 @@ Secrets live only in `.env`, which is gitignored. No keys are committed.
 
 ## Known limitations & what I'd improve with more time
 
-- **Notification tuning is global.** Owner alerts are now rolled up to one summary email per
-  owner with a materiality threshold and day-scope (see Notification routing), which keeps the
-  count small. Remaining gaps: the threshold is a single global `materiality_pp` rather than
-  per-line-item, and there's no cross-run de-duplication/snooze — re-running the same day would
-  re-notify. A production version would persist "already paged" state and support per-owner
-  quiet hours.
+- **Notification tuning is global.** The threshold remains one global `materiality_pp`, not
+  per-line-item. The UI prevents duplicate delivery for the current analysis/session, but a
+  new run of the same day can notify again; production should persist delivery keys and support
+  snooze/quiet hours.
 - **Dates.** The sample has no dates, only day numbers; I map FC-Delhi's days onto a real
   calendar ending 2026-07-17 for realism. Real feeds should carry actual dates.
 - **Single-node SQLite.** Fine for one machine / one operator; a multi-user deployment would
@@ -237,6 +242,7 @@ run_pipeline.py           Headless CLI runner
 config.yaml               Business rules + email routing (edit me)
 core/
   config.py               Load/validate config.yaml
+  intake.py               Multi-file classification, FC assignment, target resolution
   loader.py               Tolerant CSV/Excel ingest + clear error messages
   engine.py               CM1/CM2, %-of-revenue, colour, anomaly detection (pure)
   memory.py               SQLite: runs, daily results, overrides, trends

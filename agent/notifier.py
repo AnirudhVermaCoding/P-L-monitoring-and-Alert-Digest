@@ -6,14 +6,15 @@ Two delivery modes (env EMAIL_MODE):
   smtp             -> actually send via smtplib. Any SMTP failure automatically falls back
                       to outbox so the pipeline never crashes on a mail problem.
 
-Routing (from config.yaml):
-  - each breached cost line item -> its owner (grouped: one email per owner per FC per day)
-  - each FC's daily colour digest -> that FC's manager
+Routing defaults to config.yaml for the CLI.  The web app supplies a run-scoped routing
+object (manager per FC + shared Manpower owner) and reviews drafts before delivery.
 """
 from __future__ import annotations
 
 import os
+import re
 import smtplib
+from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -27,6 +28,35 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTBOX = REPO_ROOT / "outputs" / "outbox"
 
 COLOUR_EMOJI = {"Red": "🔴", "Yellow": "🟡", "Green": "🟢", "Blue": "🔵"}
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def is_valid_email(value: str) -> bool:
+    """Small, dependency-free validation for one deliverable mailbox address."""
+    return bool(_EMAIL_RE.fullmatch(str(value or "").strip()))
+
+
+@dataclass
+class NotificationRouting:
+    """Run-scoped recipients; keeps UI-entered addresses out of persistent config."""
+    fc_managers: dict[str, str]
+    line_owners: dict[str, str]
+    enabled_owner_items: set[str] | None = None
+
+    def manager_for(self, fc: str) -> str:
+        return self.fc_managers.get(fc, self.fc_managers.get("default", "")).strip()
+
+    def owner_for(self, item: str, fc: str) -> str:
+        return self.line_owners.get(item, self.manager_for(fc)).strip()
+
+    def owner_enabled(self, item: str) -> bool:
+        return self.enabled_owner_items is None or item in self.enabled_owner_items
+
+
+def routing_from_config(config: Config) -> NotificationRouting:
+    """Legacy/default routing used by the headless CLI."""
+    return NotificationRouting(dict(config.fc_managers), dict(config.owners), None)
 
 
 def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: list[dict],
@@ -93,9 +123,9 @@ def build_digests(pnl_df: pd.DataFrame, anomalies_df: pd.DataFrame, insights: li
 def _line_deviation(row: pd.Series, config: Config) -> float:
     """pp by which a line-item anomaly is outside its target range (0 if in range)."""
     item = row["Line Item"]
-    t = config.targets.get(item)
-    if t is None:
+    if item not in config.targets:
         return 0.0
+    t = config.target_for(str(row["FC"]), item)
     pct = row["% of Revenue"]
     if pct > t["max"]:
         return pct - t["max"]
@@ -116,7 +146,7 @@ def _in_scope_dates(pnl_df: pd.DataFrame, scope: str) -> dict[str, set]:
 
 
 def _owner_messages(anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
-                    config: Config) -> list[dict]:
+                    config: Config, routing: NotificationRouting) -> list[dict]:
     """ONE summary email per owner, listing only their MATERIAL breaches within scope.
 
     Sub-threshold breaches stay in the anomalies log / dashboard but don't page anyone. This
@@ -135,12 +165,14 @@ def _owner_messages(anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
     by_owner: dict[str, list[dict]] = {}
     for _, a in line_anoms.iterrows():
         fc, date = a["FC"], a["Date"]
+        if not routing.owner_enabled(a["Line Item"]):
+            continue
         if date not in scoped_dates.get(fc, set()):
             continue
         dev = _line_deviation(a, config)
         if dev < threshold:  # not material — logged, but don't page
             continue
-        owner = config.owner_for(a["Line Item"])
+        owner = routing.owner_for(a["Line Item"], fc)
         by_owner.setdefault(owner, []).append({
             "fc": fc, "date": date, "item": a["Line Item"],
             "pct": a["% of Revenue"], "dev": dev,
@@ -178,12 +210,12 @@ def _owner_messages(anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
     return messages
 
 
-def _digest_messages(digests: dict[str, dict], config: Config) -> list[dict]:
+def _digest_messages(digests: dict[str, dict], routing: NotificationRouting) -> list[dict]:
     messages = []
     for fc, digest in digests.items():
         colour = digest.get("colour", "Green")
         subject = f"[{colour}] Daily P&L digest — {fc}"
-        messages.append({"to": config.manager_for(fc), "subject": subject,
+        messages.append({"to": routing.manager_for(fc), "subject": subject,
                          "body": digest["text"], "html": render_digest_html(digest),
                          "fc": fc, "date": "digest", "kind": "digest"})
     return messages
@@ -237,31 +269,61 @@ def _send_smtp(msg: dict) -> None:
         server.send_message(email)
 
 
-def dispatch(digests: dict[str, dict], anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
-             config: Config, run_date: str) -> list[dict]:
-    """Deliver rolled-up owner alerts + FC digests. Returns a send log for the UI."""
-    mode = os.environ.get("EMAIL_MODE", "outbox").strip().lower()
-    messages = _owner_messages(anomalies_df, pnl_df, config) + _digest_messages(digests, config)
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
+
+def prepare_notifications(digests: dict[str, dict], anomalies_df: pd.DataFrame,
+                          pnl_df: pd.DataFrame, config: Config,
+                          routing: NotificationRouting | None = None) -> list[dict]:
+    """Build side-effect-free notification drafts for review before delivery."""
+    routing = routing or routing_from_config(config)
+    messages = (
+        _owner_messages(anomalies_df, pnl_df, config, routing)
+        + _digest_messages(digests, routing)
+    )
+    for message in messages:
+        message["recipient_valid"] = is_valid_email(message.get("to", ""))
+    return messages
+
+
+def deliver_notifications(messages: list[dict], run_date: str) -> list[dict]:
+    """Deliver already-reviewed drafts and return a complete delivery log."""
+    mode = os.environ.get("EMAIL_MODE", "outbox").strip().lower()
     log: list[dict] = []
     for msg in messages:
         record = {"to": msg["to"], "subject": msg["subject"], "kind": msg["kind"],
                   "fc": msg["fc"], "mode": mode, "status": "", "detail": ""}
         try:
-            if mode == "smtp":
+            if not is_valid_email(msg.get("to", "")):
+                record["status"] = "skipped_invalid_recipient"
+                record["mode"] = "not_delivered"
+                record["detail"] = "Enter one valid email address and run the analysis again."
+            elif mode == "smtp":
                 _send_smtp(msg)
                 record["status"] = "sent"
             else:
                 path = _write_outbox(msg, run_date)
                 record["status"] = "written"
-                record["detail"] = str(path.relative_to(REPO_ROOT))
+                record["detail"] = _display_path(path)
         except Exception as exc:  # noqa: BLE001 - never let mail issues break the pipeline
             # Fall back to outbox and note why.
             path = _write_outbox(msg, run_date)
             record["status"] = "fallback_outbox"
             record["mode"] = "outbox"
-            record["detail"] = f"SMTP failed ({exc}); wrote {path.relative_to(REPO_ROOT)}"
+            record["detail"] = f"SMTP failed ({exc}); wrote {_display_path(path)}"
         record["body"] = msg["body"]
         record["html"] = msg.get("html", "")
         log.append(record)
     return log
+
+
+def dispatch(digests: dict[str, dict], anomalies_df: pd.DataFrame, pnl_df: pd.DataFrame,
+             config: Config, run_date: str,
+             routing: NotificationRouting | None = None) -> list[dict]:
+    """Backward-compatible prepare + deliver helper used by the headless CLI."""
+    drafts = prepare_notifications(digests, anomalies_df, pnl_df, config, routing)
+    return deliver_notifications(drafts, run_date)

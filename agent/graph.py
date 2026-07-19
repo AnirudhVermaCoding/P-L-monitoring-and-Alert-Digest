@@ -7,6 +7,7 @@ live status without any st.* calls inside the graph.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -14,17 +15,27 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from agent.insights import generate_insights
-from agent.notifier import build_digests, dispatch
+from agent.notifier import (
+    NotificationRouting,
+    build_digests,
+    deliver_notifications,
+    prepare_notifications,
+)
 from core.config import Config, load_config
 from core.engine import compute_pnl, detect_anomalies
-from core.loader import LoaderError, load_pnl
+from core.intake import inspect_inputs
 
 
 class PnlState(TypedDict, total=False):
     source: str                 # file path to load (day-wise data)
+    sources: list[str]          # one or more mixed P&L / target files
     criteria_source: str        # optional separate file holding target ranges
+    fc_assignments: dict[str, str]
+    target_assignments: dict[str, str]
     run_date: str               # label for outbox folder
     config: Config
+    routing: NotificationRouting
+    dispatch_notifications: bool
     criteria_info: dict         # which targets came from the input vs config.yaml
     apply_overrides: bool
     raw_df: pd.DataFrame
@@ -32,6 +43,7 @@ class PnlState(TypedDict, total=False):
     anomalies_df: pd.DataFrame
     insights: list[dict]
     digests: dict[str, dict]
+    notification_drafts: list[dict]
     notifications: list[dict]
     trend_notes: dict[str, str]
     llm_used: bool
@@ -53,35 +65,48 @@ def _emit(state: PnlState, msg: str) -> None:
 
 def ingest_node(state: PnlState) -> dict:
     _emit(state, "Loading data…")
-    try:
-        raw = load_pnl(state["source"])
-    except LoaderError as exc:
-        return {"errors": [str(exc)], "progress": "Load failed"}
-    except Exception as exc:  # noqa: BLE001
-        return {"errors": [f"Unexpected error reading input: {exc}"], "progress": "Load failed"}
-
-    out: dict = {"raw_df": raw, "progress": "Data loaded"}
-
-    # Adaptive targets: prefer target ranges supplied WITH the input — either a separate
-    # criteria file, or another sheet inside the data workbook (e.g. "Ideal FC Criteria") —
-    # over config.yaml. Falls back silently to config.yaml when no criteria are found.
-    from dataclasses import replace
-    from core.criteria import extract_criteria
-
     cfg = state["config"]
-    criteria = None
-    if state.get("criteria_source"):
-        criteria = extract_criteria(state["criteria_source"])
-    if criteria is None:
-        criteria = extract_criteria(state["source"])
+    sources = list(state.get("sources") or [state["source"]])
+    if state.get("criteria_source") and state["criteria_source"] not in sources:
+        sources.append(state["criteria_source"])
+    try:
+        intake = inspect_inputs(
+            sources,
+            cfg.targets,
+            state.get("fc_assignments"),
+            state.get("target_assignments"),
+        )
+    except Exception as exc:  # noqa: BLE001 - keep intake failures user-facing
+        return {"errors": [f"Unexpected error reading input: {exc}"], "progress": "Load failed"}
+    if intake.errors:
+        return {"errors": intake.errors, "progress": "Load failed"}
 
-    if criteria:
-        out["config"] = replace(cfg, targets={**cfg.targets, **criteria})
-        out["criteria_info"] = {"source": "input file", "targets": criteria}
-        _emit(state, f"Using target ranges from the input file ({len(criteria)} line items)")
-    else:
-        out["criteria_info"] = {"source": "config.yaml", "targets": {}}
-    return out
+    configured = replace(
+        cfg,
+        targets={**cfg.targets, **intake.global_targets},
+        targets_by_fc=intake.targets_by_fc,
+    )
+    uploaded_count = len(intake.global_targets) + sum(
+        len(targets) for targets in intake.targets_by_fc.values()
+    )
+    if uploaded_count:
+        _emit(
+            state,
+            f"Using {uploaded_count} uploaded target definition(s) across {len(intake.fcs)} FC(s)",
+        )
+    return {
+        "raw_df": intake.data,
+        "config": configured,
+        "criteria_info": {
+            "source": "input files" if uploaded_count else "config.yaml",
+            "targets": intake.global_targets,
+            "targets_by_fc": intake.targets_by_fc,
+            "resolved_targets_by_fc": intake.resolved_targets_by_fc,
+            "target_sources_by_fc": intake.target_sources_by_fc,
+            "warnings": intake.warnings,
+        },
+        "progress": "Data loaded",
+    }
 
 
 def compute_node(state: PnlState) -> dict:
@@ -145,11 +170,19 @@ def digest_node(state: PnlState) -> dict:
 
 
 def notify_node(state: PnlState) -> dict:
-    _emit(state, "Dispatching notifications…")
+    _emit(state, "Preparing notification drafts…")
     cfg = state["config"]
-    log = dispatch(state["digests"], state["anomalies_df"], state["pnl_df"], cfg,
-                   state["run_date"])
-    return {"notifications": log, "progress": f"{len(log)} notifications dispatched"}
+    drafts = prepare_notifications(
+        state["digests"], state["anomalies_df"], state["pnl_df"], cfg,
+        state.get("routing"),
+    )
+    if state.get("dispatch_notifications", True):
+        log = deliver_notifications(drafts, state["run_date"])
+        progress = f"{len(log)} notifications dispatched"
+    else:
+        log = []
+        progress = f"{len(drafts)} notification drafts ready for review"
+    return {"notification_drafts": drafts, "notifications": log, "progress": progress}
 
 
 def _route_after_ingest(state: PnlState) -> str:
@@ -179,8 +212,12 @@ def build_graph():
     return builder.compile()
 
 
-def run_pipeline(source: str, run_date: str = "run", config: Optional[Config] = None,
+def run_pipeline(source: str | list[str], run_date: str = "run", config: Optional[Config] = None,
                  apply_overrides: bool = True, criteria_source: Optional[str] = None,
+                 fc_assignments: Optional[dict[str, str]] = None,
+                 target_assignments: Optional[dict[str, str]] = None,
+                 routing: Optional[NotificationRouting] = None,
+                 dispatch_notifications: bool = True,
                  progress_cb: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
     """Execute the full graph once and return the final state dict.
 
@@ -188,14 +225,23 @@ def run_pipeline(source: str, run_date: str = "run", config: Optional[Config] = 
     data file's own sheets are still scanned for an 'Ideal FC Criteria' table.
     """
     graph = build_graph()
+    sources = [source] if isinstance(source, str) else list(source)
+    if not sources:
+        return {"errors": ["No input files were supplied."], "progress": "Load failed"}
     state: PnlState = {
-        "source": source,
+        "source": sources[0],
+        "sources": sources,
         "criteria_source": criteria_source or "",
+        "fc_assignments": fc_assignments or {},
+        "target_assignments": target_assignments or {},
         "run_date": run_date,
         "config": config or load_config(),
+        "dispatch_notifications": dispatch_notifications,
         "apply_overrides": apply_overrides,
         "errors": [],
         "progress_cb": progress_cb,
     }
+    if routing is not None:
+        state["routing"] = routing
     result = graph.invoke(state)
     return result

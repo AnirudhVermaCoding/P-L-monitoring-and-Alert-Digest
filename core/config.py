@@ -35,11 +35,16 @@ class Config:
     colors: dict[str, float]
     owners: dict[str, str]
     fc_managers: dict[str, str]
+    targets_by_fc: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
     notifications: dict = field(default_factory=lambda: dict(DEFAULT_NOTIFICATIONS))
     raw: dict = field(default_factory=dict)
 
-    def target_range_str(self, line_item: str) -> str:
-        t = self.targets[line_item]
+    def target_for(self, fc: str, line_item: str) -> dict[str, float]:
+        """Return the FC-specific target when supplied, otherwise the global target."""
+        return self.targets_by_fc.get(str(fc), {}).get(line_item, self.targets[line_item])
+
+    def target_range_str(self, line_item: str, fc: str | None = None) -> str:
+        t = self.target_for(fc, line_item) if fc is not None else self.targets[line_item]
         return f"{t['min']:g}-{t['max']:g}%"
 
     def owner_for(self, line_item: str) -> str:

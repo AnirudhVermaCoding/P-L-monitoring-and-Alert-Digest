@@ -68,7 +68,7 @@ def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
         for item in LINE_ITEMS:
             pct = r[f"{item} %"]
-            t = config.targets[item]
+            t = config.target_for(fc, item)
             status = None
             if pct < t["min"]:
                 status = "BELOW_MIN"
@@ -78,7 +78,7 @@ def detect_anomalies(pnl_df: pd.DataFrame, config: Config) -> pd.DataFrame:
                 rows.append({
                     "Date": date, "FC": fc, "Line Item": item,
                     "% of Revenue": round(pct, 2),
-                    "Target Range": config.target_range_str(item),
+                    "Target Range": config.target_range_str(item, fc),
                     "Status": status, "Colour": colour,
                 })
 
@@ -118,10 +118,11 @@ def contributors_for_day(pnl_row: pd.Series, config: Config) -> list[dict]:
     Used to name the "top contributors" in insights.
     """
     rev = pnl_row["Revenue"]
+    fc = str(pnl_row["FC"])
     out = []
     for item in LINE_ITEMS:
         pct = pnl_row[f"{item} %"]
-        t = config.targets[item]
+        t = config.target_for(fc, item)
         if pct > t["max"]:
             dev = pct - t["max"]
             direction = "above max"
@@ -133,7 +134,7 @@ def contributors_for_day(pnl_row: pd.Series, config: Config) -> list[dict]:
         out.append({
             "line_item": item,
             "pct": round(pct, 2),
-            "target": config.target_range_str(item),
+            "target": config.target_range_str(item, fc),
             "deviation_pp": round(dev, 2),
             "direction": direction,
             "impact_value": round(dev * rev / 100, 0),
