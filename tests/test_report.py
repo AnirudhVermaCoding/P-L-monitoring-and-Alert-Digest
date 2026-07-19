@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config import load_config
 from core.engine import compute_pnl, detect_anomalies
-from core.report import COLOUR_FILL, build_report_xlsx
+from core.report import COLOUR_FILL, COLOUR_TINT, build_anomalies_xlsx, build_report_xlsx
 
 
 def _sample_pnl():
@@ -70,9 +70,36 @@ def test_report_handles_empty_anomalies():
     print("PASS test_report_handles_empty_anomalies")
 
 
+def test_anomalies_xlsx_is_colour_coded():
+    pnl, cfg = _sample_pnl()
+    anoms = detect_anomalies(pnl, cfg)
+    assert not anoms.empty
+    wb = load_workbook(BytesIO(build_anomalies_xlsx(anoms)))
+    assert wb.sheetnames == ["Anomalies"], wb.sheetnames
+    ws = wb["Anomalies"]
+    headers = [c.value for c in ws[1]]
+    ci = headers.index("Colour") + 1
+    tinted = chipped = 0
+    for row in range(2, ws.max_row + 1):
+        colour = ws.cell(row=row, column=ci).value
+        if colour not in COLOUR_TINT:
+            continue
+        # a non-Colour cell in the row carries the soft tint
+        row_fill = (ws.cell(row=row, column=1).fill.fgColor.rgb or "")
+        assert row_fill.endswith(COLOUR_TINT[colour]), (colour, row_fill)
+        tinted += 1
+        # the Colour cell carries the solid chip
+        chip = (ws.cell(row=row, column=ci).fill.fgColor.rgb or "")
+        assert chip.endswith(COLOUR_FILL[colour]), (colour, chip)
+        chipped += 1
+    assert tinted > 0 and chipped > 0
+    print(f"PASS test_anomalies_xlsx_is_colour_coded ({tinted} rows tinted + chipped)")
+
+
 def run_all():
     test_report_has_two_styled_sheets()
     test_report_handles_empty_anomalies()
+    test_anomalies_xlsx_is_colour_coded()
     print("\nALL REPORT TESTS PASSED")
 
 

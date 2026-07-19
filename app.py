@@ -26,7 +26,9 @@ load_dotenv(override=True)
 from agent.graph import run_pipeline  # noqa: E402
 from core.config import load_config  # noqa: E402
 from core.engine import latest_status_by_fc  # noqa: E402
-from core.report import build_report_xlsx  # noqa: E402
+from core.report import build_anomalies_xlsx, build_report_xlsx  # noqa: E402
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 from core.jobstore import get_job, start as start_thread  # noqa: E402
 from core.memory import (  # noqa: E402
     add_override,
@@ -270,14 +272,17 @@ if view == "🟢 Simple":
     dl1, dl2 = st.columns(2)
     dl1.download_button(
         "⬇️ Full report (Excel, colour-coded)", build_report_xlsx(pnl, anoms),
-        "fc_pnl_report.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        width="stretch",
+        "fc_pnl_report.xlsx", _XLSX_MIME, width="stretch",
         help="Two sheets — P&L and Anomalies — with the Colour column filled Red/Yellow/Green/Blue.",
     )
     dl2.download_button(
-        "⬇️ Anomalies log (CSV)", anoms.to_csv(index=False).encode("utf-8"),
-        "anomalies_log.csv", "text/csv", width="stretch",
+        "⬇️ Anomalies log (Excel, colour-coded)", build_anomalies_xlsx(anoms),
+        "anomalies_log.xlsx", _XLSX_MIME, width="stretch",
+        help="Each row tinted by the day's colour; Colour column shown Red/Yellow/Green/Blue.",
+    )
+    st.download_button(
+        "…or plain anomalies CSV (raw data)", anoms.to_csv(index=False).encode("utf-8"),
+        "anomalies_log.csv", "text/csv",
         help="Date | FC | Line Item | % of Revenue | Target Range | Status | Colour",
     )
     if notifications:
@@ -358,10 +363,18 @@ with tab_pnl:
 with tab_anom:
     st.subheader("Flagged anomalies log")
     st.caption("Date | FC | Line Item | % of Revenue | Target Range | Status | Colour")
-    st.dataframe(anoms, width="stretch")
-    st.download_button("⬇️ Download anomalies (CSV)",
-                       anoms.to_csv(index=False).encode("utf-8"),
-                       "anomalies_log.csv", "text/csv")
+    if "Colour" in anoms.columns and not anoms.empty:
+        def _colour_cell(v):
+            hexc = COLOUR_HEX.get(v)
+            return f"background-color: {hexc}; color: white; font-weight: 600;" if hexc else ""
+        st.dataframe(anoms.style.map(_colour_cell, subset=["Colour"]), width="stretch")
+    else:
+        st.dataframe(anoms, width="stretch")
+    ac1, ac2 = st.columns(2)
+    ac1.download_button("⬇️ Anomalies (Excel, colour-coded)", build_anomalies_xlsx(anoms),
+                        "anomalies_log.xlsx", _XLSX_MIME, width="stretch")
+    ac2.download_button("⬇️ Anomalies (CSV, raw)", anoms.to_csv(index=False).encode("utf-8"),
+                        "anomalies_log.csv", "text/csv", width="stretch")
 
     st.subheader("Plain-language insights")
     for ins in insights:
