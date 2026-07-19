@@ -10,29 +10,50 @@ Per the Streamlit multithreading docs, the worker thread does NOT call any st.* 
 """
 from __future__ import annotations
 
-import os
 import hashlib
+import importlib
+import os
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # override=True so the .env file is the single source of truth — otherwise a stale
 # EMAIL_MODE/XAI_API_KEY left in the process environment would silently win over .env.
 load_dotenv(override=True)
 
-from agent.graph import run_pipeline  # noqa: E402
-from agent.notifier import (  # noqa: E402
-    NotificationRouting,
-    deliver_notifications,
-    is_valid_email,
-)
-from core.config import load_config  # noqa: E402
-from core.engine import latest_status_by_fc  # noqa: E402
-from core.intake import GLOBAL_SCOPE, inspect_inputs  # noqa: E402
+# Streamlit Cloud updates source files without always restarting the Python process. Imported
+# application modules can therefore remain at the previous revision while app.py reruns. Reload
+# the dependency chain only when its cross-module API marker is stale; this prevents mixed-revision
+# ImportErrors while leaving ordinary Streamlit reruns untouched.
+_RUNTIME_API_VERSION = 1
+
+
+def _runtime_module(name: str):
+    module = importlib.import_module(name)
+    if getattr(module, "RUNTIME_API_VERSION", 0) != _RUNTIME_API_VERSION:
+        module = importlib.reload(module)
+    return module
+
+
+_config_module = _runtime_module("core.config")
+_engine_module = _runtime_module("core.engine")
+_intake_module = _runtime_module("core.intake")
+_runtime_module("agent.insights")
+_notifier_module = _runtime_module("agent.notifier")
+_graph_module = _runtime_module("agent.graph")
+
+load_config = _config_module.load_config
+latest_status_by_fc = _engine_module.latest_status_by_fc
+NotificationRouting = _notifier_module.NotificationRouting
+deliver_notifications = _notifier_module.deliver_notifications
+is_valid_email = _notifier_module.is_valid_email
+run_pipeline = _graph_module.run_pipeline
+GLOBAL_SCOPE = _intake_module.GLOBAL_SCOPE
+inspect_inputs = _intake_module.inspect_inputs
+
 from core.report import build_anomalies_xlsx, build_report_xlsx  # noqa: E402
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -517,7 +538,7 @@ if view == "🟢 Simple":
         preview = next((draft for draft in drafts if draft.get("html")), None)
         if preview:
             with st.expander(f"Preview: {preview['subject']}"):
-                components.html(preview["html"], height=480, scrolling=True)
+                st.iframe(preview["html"], height=480)
     else:
         st.caption("✉️ No notification drafts were needed for this run.")
 
@@ -640,7 +661,7 @@ with tab_notif:
                 f"{draft['subject']}{recipient_state}"
             ):
                 if draft.get("html"):
-                    components.html(draft["html"], height=520, scrolling=True)
+                    st.iframe(draft["html"], height=520)
                 else:
                     st.code(draft.get("body", ""), language="text")
     else:

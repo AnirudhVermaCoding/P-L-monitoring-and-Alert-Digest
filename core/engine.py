@@ -9,6 +9,8 @@ import pandas as pd
 
 from core.config import LINE_ITEMS, Config
 
+RUNTIME_API_VERSION = 1
+
 # Costs that sit "below the CM1 line".
 CM1_COSTS = ["Manpower", "Packaging"]
 # Costs subtracted between CM1 and CM2.

@@ -4,7 +4,6 @@ Every table is classified independently.  P&L tables are normalized and concaten
 target tables are parsed into global and per-FC profiles.  Ambiguity is surfaced through
 editable assignments in the UI rather than hidden behind a silent guess.
 """
-from __future__ import annotations
 
 import csv
 import hashlib
@@ -17,6 +16,8 @@ import pandas as pd
 from core.config import LINE_ITEMS
 from core.criteria import _canon_item, _parse_range
 from core.loader import COLUMN_ALIASES, LoaderError, REQUIRED_NUMERIC
+
+RUNTIME_API_VERSION = 1
 
 GLOBAL_SCOPE = "__global__"
 _GENERIC_NAMES = {

@@ -25,6 +25,8 @@ from core.config import Config, load_config
 from core.engine import compute_pnl, detect_anomalies
 from core.intake import inspect_inputs
 
+RUNTIME_API_VERSION = 1
+
 
 class PnlState(TypedDict, total=False):
     source: str                 # file path to load (day-wise data)

@@ -184,6 +184,7 @@ python -m tests.test_criteria
 python -m tests.test_intake
 python -m tests.test_notifications
 python -m tests.test_report
+python -m tests.test_runtime
 ```
 `test_engine` — hand-computed checks for CM1/CM2, colour bands, the four scenarios, and
 contributor ranking. `test_criteria` — target-range parsing from a 2-sheet workbook, a
@@ -191,6 +192,9 @@ separate file, alternative spellings, and the guard that a day-wise data sheet i
 mistaken for criteria. `test_intake` covers multi-file/multi-FC classification, target shapes,
 precedence, conflicts and duplicates. `test_notifications` covers run-scoped routing,
 review-before-send, and invalid-recipient protection.
+
+`test_runtime` guards the Streamlit Cloud hot-reload API contract, dataclass import edge case,
+and deprecated HTML renderer removal.
 
 ---
 

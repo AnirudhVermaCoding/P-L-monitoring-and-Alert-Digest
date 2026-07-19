@@ -9,7 +9,6 @@ Two delivery modes (env EMAIL_MODE):
 Routing defaults to config.yaml for the CLI.  The web app supplies a run-scoped routing
 object (manager per FC + shared Manpower owner) and reviews drafts before delivery.
 """
-from __future__ import annotations
 
 import os
 import re
@@ -23,6 +22,8 @@ import pandas as pd
 from agent.email_templates import render_digest_html, render_owner_html
 from core.config import Config
 from core.engine import latest_status_by_fc
+
+RUNTIME_API_VERSION = 1
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTBOX = REPO_ROOT / "outputs" / "outbox"

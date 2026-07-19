@@ -15,6 +15,8 @@ import pandas as pd
 from core.config import Config
 from core.engine import contributors_for_day, recommended_action
 
+RUNTIME_API_VERSION = 1
+
 # Cap LLM calls to stay well within any free tier.
 MAX_LLM_CALLS = 20
 
